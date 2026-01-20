@@ -2,11 +2,9 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="mobile-web-app-capable" content="yes">
-    <title>OttO Console - Nintendo Remaster</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>OttO Console - System Architecture</title>
     
-    <!-- Motores de IA e Estilo -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
@@ -14,163 +12,155 @@
     <script src="https://cdn.tailwindcss.com"></script>
 
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;700&family=Russo+One&family=Roboto:wght@300;400;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;700&family=Inter:wght@300;900&display=swap');
 
-        :root { 
-            --wii-bg: #f5f5f5; 
-            --wii-blue: #3498db; 
-            --wii-glass: rgba(255, 255, 255, 0.9);
+        :root {
+            --sys-blue: #00A3E0;
+            --sys-gray: #f0f0f0;
+            --sys-glass: rgba(255, 255, 255, 0.85);
+        }
+
+        body {
+            background: #111;
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+            touch-action: none;
+            user-select: none;
+        }
+
+        /* Hardware Layer */
+        #layer-hw { position: fixed; inset: 0; z-index: 0; }
+        #webcam { transform: scaleX(-1); opacity: 0; position: absolute; }
+        #canvas-main { width: 100%; height: 100%; display: block; }
+
+        /* OS Layer */
+        #layer-os { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+        .screen {
+            position: absolute; inset: 0;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            background: var(--sys-gray);
+            transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+            pointer-events: auto;
+        }
+        .hidden { opacity: 0; pointer-events: none; transform: scale(1.05); }
+
+        /* Menu Grid */
+        #menu-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 2rem;
+            padding: 2rem;
+            max-width: 1200px;
+            perspective: 1000px;
+        }
+
+        .channel {
+            background: #fff;
+            border-radius: 20px;
+            aspect-ratio: 16/9;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+            transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            cursor: pointer;
+            border: 4px solid transparent;
         }
         
-        body { 
-            background-color: #000; 
-            margin: 0; padding: 0; 
-            overflow: hidden; 
-            font-family: 'Roboto', sans-serif; 
-            touch-action: none; 
-            user-select: none; 
-            width: 100vw; height: 100dvh; 
+        .channel:hover {
+            transform: translateY(-5px) scale(1.02);
+            box-shadow: 0 20px 40px rgba(0,163,224,0.2);
+            border-color: var(--sys-blue);
         }
-        
-        /* CAMADAS DO SISTEMA */
-        #hardware-layer { position: absolute; inset: 0; z-index: 0; background: #000; }
-        #os-layer { position: relative; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
-        
-        /* VIDEO & CANVAS */
-        #webcam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0; transition: opacity 1s; }
-        #game-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-        
-        /* TELAS DO SISTEMA */
-        .screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--wii-bg); pointer-events: auto; transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
-        .hidden { opacity: 0; pointer-events: none; transform: scale(1.1); }
 
-        /* MENU DE CANAIS (ESTILO WII U) */
-        #screen-menu { background: radial-gradient(circle at center, #ffffff, #e0e0e0); }
-        .channel-grid { 
-            display: grid; width: 90%; max-width: 1200px; gap: 20px; 
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            padding: 40px;
-        }
-        
-        .channel { 
-            background: #fff; border-radius: 24px; border: 4px solid #fff;
-            aspect-ratio: 1.6 / 1; display: flex; flex-direction: column; 
-            align-items: center; justify-content: center; cursor: pointer;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.05);
-            transition: all 0.2s; position: relative; overflow: hidden;
-        }
-        .channel:hover { transform: scale(1.05); box-shadow: 0 15px 35px rgba(0,0,0,0.1); border-color: var(--wii-blue); }
-        .channel:active { transform: scale(0.95); }
-        .channel-icon { font-size: 4rem; margin-bottom: 10px; }
-        .channel-name { font-family: 'Chakra Petch', sans-serif; font-weight: 700; color: #444; text-transform: uppercase; letter-spacing: 1px; }
-        .channel-empty { background: #eee; opacity: 0.5; border: 4px dashed #ccc; cursor: default; }
-        .channel-empty:hover { transform: none; border-color: #ccc; }
+        .icon-game { font-size: 3.5rem; margin-bottom: 0.5rem; filter: drop-shadow(0 4px 0 rgba(0,0,0,0.1)); }
+        .text-game { font-family: 'Chakra Petch', sans-serif; font-weight: 700; color: #333; text-transform: uppercase; }
 
-        /* HUD & UI */
-        #game-ui { background: transparent; pointer-events: none; }
-        .hud-btn { pointer-events: auto; background: var(--wii-blue); color: #fff; border: 3px solid #fff; border-radius: 50%; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; box-shadow: 0 5px 15px rgba(0,0,0,0.2); transition: transform 0.1s; }
-        .hud-btn:active { transform: scale(0.9); }
+        /* HUD */
+        #game-ui { pointer-events: none; }
+        .hud-panel {
+            position: absolute; top: 2rem; left: 2rem;
+            background: rgba(0,0,0,0.6); backdrop-filter: blur(8px);
+            padding: 1rem 2rem; border-radius: 12px;
+            border-left: 6px solid var(--sys-blue);
+            color: #fff;
+        }
+        .score-val { font-size: 2.5rem; font-weight: 900; line-height: 1; }
+        .score-lbl { font-size: 0.75rem; letter-spacing: 0.2em; opacity: 0.8; }
 
-        #hud-score-box {
-            position: absolute; top: 30px; left: 30px;
-            background: rgba(0,0,0,0.7); backdrop-filter: blur(10px);
-            padding: 15px 30px; border-radius: 20px; border-left: 8px solid var(--wii-blue);
-            color: #fff; pointer-events: auto;
+        /* Boot Sequence */
+        .boot-ring {
+            width: 60px; height: 60px;
+            border: 6px solid #ddd; border-top-color: var(--sys-blue);
+            border-radius: 50%; animate: spin 1s linear infinite;
         }
-        #hud-score { font-family: 'Russo One', sans-serif; font-size: 2.5rem; line-height: 1; }
-        
-        #game-msg {
-            position: absolute; top: 40%; width: 100%; text-align: center;
-            font-family: 'Russo One', sans-serif; font-size: 5rem; color: #fff;
-            text-shadow: 0 5px 20px rgba(0,0,0,0.5); pointer-events: none;
-            transform: scale(0); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }
-        #game-msg.pop { transform: scale(1); }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
-        /* VOLANTE VIRTUAL */
-        #ui-wheel { position: absolute; top: 40px; left: 50%; transform: translateX(-50%); opacity: 0; transition: opacity 0.5s; }
-        .steering-wheel {
-            width: 240px; height: 240px; border-radius: 50%;
-            border: 20px solid #222; background: rgba(0,0,0,0.1);
-            position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        /* Buttons */
+        .btn-core {
+            background: var(--sys-blue); color: white;
+            padding: 1rem 3rem; border-radius: 50px;
+            font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+            box-shadow: 0 10px 20px rgba(0,163,224,0.3);
+            transition: transform 0.1s; border: none; cursor: pointer;
         }
-        .steering-wheel::after { content: ''; position: absolute; top: -20px; left: 50%; transform: translateX(-50%); width: 20px; height: 20px; background: #f00; border-radius: 2px; }
-
-        /* BOTÕES */
-        .btn-wii {
-            background: linear-gradient(to bottom, #3498db, #2980b9);
-            color: #fff; padding: 20px 50px; border-radius: 50px;
-            font-weight: 700; font-size: 1.2rem; text-transform: uppercase;
-            box-shadow: 0 10px 20px rgba(52, 152, 219, 0.3);
-            transition: all 0.2s; border: 2px solid rgba(255,255,255,0.2);
-        }
-        .btn-wii:hover { transform: translateY(-2px); box-shadow: 0 15px 30px rgba(52, 152, 219, 0.4); }
-        .btn-wii:active { transform: translateY(2px); }
+        .btn-core:active { transform: scale(0.95); }
     </style>
 </head>
 <body>
 
-    <div id="hardware-layer">
-        <video id="video-source" playsinline style="display:none"></video>
-        <video id="webcam" autoplay muted playsinline></video>
-        <canvas id="game-canvas"></canvas>
+    <div id="layer-hw">
+        <video id="webcam" playsinline autoplay muted></video>
+        <canvas id="canvas-main"></canvas>
     </div>
 
-    <div id="os-layer">
-        <!-- Tela de Segurança -->
-        <div id="screen-safety" class="screen">
-            <div class="bg-white p-12 rounded-[40px] shadow-2xl text-center max-w-lg mx-4">
-                <div class="text-7xl mb-6">⚠️</div>
-                <h1 class="text-3xl font-black text-gray-800 mb-4">AVISO DE SEGURANÇA</h1>
-                <p class="text-gray-500 mb-10 font-medium">Certifique-se de que há espaço suficiente ao seu redor. Não solte o controle imaginário!</p>
-                <button onclick="window.System.boot()" class="btn-wii animate-pulse">COMEÇAR</button>
-                <div id="boot-log" class="mt-8 text-xs font-mono text-blue-500 uppercase tracking-widest">Aguardando...</div>
+    <div id="layer-os">
+        
+        <div id="screen-boot" class="screen">
+            <div class="bg-white p-10 rounded-3xl shadow-xl text-center max-w-md">
+                <div class="text-6xl mb-4">👋</div>
+                <h1 class="text-2xl font-black text-gray-800 mb-2">SISTEMA OTTO</h1>
+                <p class="text-gray-500 mb-8">Por favor, garanta que tem espaço livre ao seu redor.</p>
+                <button onclick="System.boot()" class="btn-core">INICIAR SISTEMA</button>
             </div>
         </div>
 
-        <!-- Tela de Carregamento -->
-        <div id="screen-load" class="screen hidden" style="background: #111;">
-            <div class="w-24 h-24 border-8 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-            <p class="mt-8 text-blue-400 font-bold tracking-[0.3em]">SISTEMA CARREGANDO</p>
+        <div id="screen-load" class="screen hidden">
+            <div class="boot-ring animate-spin"></div>
+            <p class="mt-6 text-gray-400 font-bold tracking-widest text-sm">CARREGANDO NEURAL ENGINE...</p>
         </div>
 
-        <!-- Menu Principal -->
         <div id="screen-menu" class="screen hidden">
-            <div id="channel-grid" class="channel-grid"></div>
-            <div class="absolute bottom-0 w-full h-20 bg-white/50 backdrop-blur-md flex items-center justify-between px-12 border-t border-white">
-                <div class="flex items-center gap-4">
-                    <div class="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold">O</div>
-                    <span class="font-black text-gray-400 tracking-widest text-sm">OTTO OS v4.0</span>
-                </div>
-                <div id="clock" class="text-3xl font-light text-gray-600">00:00</div>
+            <div class="absolute top-0 w-full p-8 flex justify-between items-center opacity-50">
+                <span class="font-bold">OTTO OS v5.0</span>
+                <span id="clock">12:00</span>
             </div>
+            <div id="menu-grid"></div>
         </div>
 
-        <!-- Interface de Jogo -->
-        <div id="game-ui" class="screen hidden">
-            <button onclick="window.System.home()" class="hud-btn absolute top-8 right-8">⌂</button>
+        <div id="screen-game" class="screen hidden" style="background: transparent;">
+            <div class="hud-panel">
+                <div class="score-lbl">SCORE</div>
+                <div id="hud-score" class="score-val">0</div>
+            </div>
             
-            <div id="hud-score-box">
-                <div class="text-[10px] font-bold tracking-widest text-blue-400 mb-1">PONTUAÇÃO</div>
-                <div id="hud-score">0</div>
+            <div id="msg-center" class="absolute center inset-0 flex items-center justify-center pointer-events-none">
+                <h1 id="game-msg" class="text-8xl font-black text-white drop-shadow-lg transition-transform scale-0">GO!</h1>
             </div>
 
-            <div id="game-msg"></div>
-            
-            <div id="ui-wheel">
-                <div id="visual-wheel" class="steering-wheel"></div>
-            </div>
+            <button onclick="System.menu()" class="absolute top-8 right-8 w-12 h-12 bg-white rounded-full text-black font-bold flex items-center justify-center shadow-lg pointer-events-auto hover:scale-110 transition-transform">✕</button>
         </div>
 
-        <!-- Game Over -->
-        <div id="screen-over" class="screen hidden" style="background: rgba(255,255,255,0.98);">
-            <h2 class="text-gray-400 font-bold tracking-widest mb-2">RESULTADO FINAL</h2>
-            <h1 class="text-8xl font-black text-gray-900 mb-12" id="final-score">0</h1>
-            <button onclick="window.System.menu()" class="btn-wii">VOLTAR AO MENU</button>
+        <div id="screen-over" class="screen hidden">
+            <h2 class="text-gray-400 tracking-widest mb-2 font-bold">FIM DE JOGO</h2>
+            <h1 id="final-score" class="text-9xl font-black text-gray-800 mb-10">0</h1>
+            <div class="flex gap-4">
+                <button onclick="System.restart()" class="btn-core bg-gray-800">TENTAR DE NOVO</button>
+                <button onclick="System.menu()" class="btn-core bg-white text-gray-800 border-2 border-gray-200">MENU</button>
+            </div>
         </div>
     </div>
 
-    <!-- Scripts do Sistema -->
     <script src="js/core.js"></script>
     <script src="js/game_run.js"></script>
     <script src="js/game_box.js"></script>
@@ -178,10 +168,11 @@
     <script src="js/game_tennis.js"></script>
 
     <script>
-        // Relógio do Sistema
+        // Clock System
         setInterval(() => {
-            const now = new Date();
-            document.getElementById('clock').innerText = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+            const d = new Date();
+            document.getElementById('clock').innerText = 
+                `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
         }, 1000);
     </script>
 </body>
