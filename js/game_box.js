@@ -1,9 +1,9 @@
 /**
  * =============================================================================
- * OTTO BOX - RHYTHM EDITION
+ * NEON BOXING - RHYTHM EDITION
  * =============================================================================
- * Diferencial: Usa um sequenciador de padrões (Pattern Sequencer) em vez de
- * aleatoriedade. Sincroniza spawns para criar "Flow".
+ * Diferencial: Sequenciador de padrões (não aleatório).
+ * Visual: Neon Cyberpunk com efeito de 'Glow'.
  * =============================================================================
  */
 
@@ -17,18 +17,14 @@
         
         // Sequenciador
         timer: 0,
-        patternIndex: 0,
-        bpm: 120,
-        
-        // Biblioteca de Padrões (L=Esq, R=Dir, B=Ambos)
-        // 0 = Centro, -1 = Esq, 1 = Dir
+        bpm: 0,
         patterns: [
-            [{t:'L', x:-0.5}, {t:'R', x:0.5}], // Jab-Cross básico
-            [{t:'L', x:-0.5}, {t:'L', x:-0.8}, {t:'R', x:0.5}], // Double Jab
-            [{t:'B', x:0}], // Block (Ambos no centro)
-            [{t:'L', x:-0.5}, {t:'R', x:0.5}, {t:'L', x:-0.5}, {t:'R', x:0.5}], // Metralhadora
+            [{t:'L', x:-0.5}, {t:'R', x:0.5}], // 1-2
+            [{t:'L', x:-0.5}, {t:'L', x:-0.8}, {t:'R', x:0.5}], // Jab-Jab-Cross
+            [{t:'B', x:0}], // Bloqueio
+            [{t:'L', x:-0.6}, {t:'R', x:0.6}, {t:'L', x:-0.4}, {t:'R', x:0.4}] // Flurry
         ],
-        currentPattern: [],
+        queue: [],
 
         init: function() {
             this.score = 0;
@@ -39,101 +35,95 @@
             this.timer = 0;
             this.loadPattern();
             window.System.msg("ROUND 1");
-            window.Sfx.boot();
         },
 
         loadPattern: function() {
-            // Escolhe um padrão aleatório da lista
-            const p = this.patterns[Math.floor(Math.random() * this.patterns.length)];
-            // Cria uma cópia com delays
-            this.currentPattern = p.map((hit, i) => ({
-                ...hit,
-                delay: i * 30 // Frames de distância entre golpes
-            }));
+            const p = this.patterns[Math.floor(Math.random()*this.patterns.length)];
+            this.queue = p.map((hit, i) => ({ ...hit, delay: i * 30 + 10 }));
         },
 
         update: function(ctx, w, h, pose) {
+            const cx = w/2;
+            const cy = h/2;
             this.timer++;
 
             // =================================================================
-            // 1. SPAWNER RÍTMICO
+            // 1. SPAWNER
             // =================================================================
-            if(this.currentPattern.length > 0) {
-                if(this.timer >= this.currentPattern[0].delay) {
-                    const hit = this.currentPattern.shift();
-                    this.spawnTarget(w, h, hit.t, hit.x);
-                    this.timer = 0; // Reset timer para o próximo do padrão
+            if(this.queue.length > 0) {
+                if(this.timer >= this.queue[0].delay) {
+                    const hit = this.queue.shift();
+                    this.spawnTarget(hit.t, hit.x);
+                    this.timer = 0;
                 }
-            } else if (this.targets.length === 0 && this.timer > 60) {
-                // Padrão acabou, carrega próximo
+            } else if (this.targets.length === 0 && this.timer > 50) {
                 this.loadPattern();
             }
 
             // =================================================================
-            // 2. RENDERIZAÇÃO DO AMBIENTE (CYBER GYM)
+            // 2. RENDERIZAÇÃO (NEON STYLE)
             // =================================================================
-            // Fundo pulsante com combo
-            const intensity = Math.min(0.3, this.combo * 0.01);
-            ctx.fillStyle = `rgba(20, 0, 40, ${1.0})`; 
-            ctx.fillRect(0, 0, w, h);
             
-            // Grid de chão
-            ctx.strokeStyle = '#ff00ff'; ctx.lineWidth = 2;
+            // Fundo Cyber
+            const pulse = Math.sin(Date.now()/500) * 0.2 + 0.8;
+            ctx.fillStyle = '#050510'; ctx.fillRect(0,0,w,h);
+            
+            // Grid de Chão (Perspectiva)
+            ctx.strokeStyle = `rgba(255, 0, 255, ${0.2 * pulse})`;
+            ctx.lineWidth = 2;
             ctx.beginPath();
-            for(let z=0; z<h; z+=40) {
-                const s = z/h;
-                ctx.moveTo(w*0.5 - w*s, z); ctx.lineTo(w*0.5 + w*s, z);
+            for(let i=0; i<w; i+=100) {
+                ctx.moveTo(cx, cy); ctx.lineTo((i-cx)*4 + cx, h);
             }
             ctx.stroke();
 
-            // Esqueleto para feedback
+            // Esqueleto Neon (Feedback)
             if(window.Gfx) window.Gfx.drawSkeleton(ctx, pose, w, h);
 
             // =================================================================
-            // 3. ATUALIZA ALVOS E COLISÃO
+            // 3. LOGICA DOS ALVOS
             // =================================================================
             this.targets.forEach((t, i) => {
-                t.z -= 15 + (this.combo * 0.2); // Acelera com combo
+                t.z -= 15 + (this.combo * 0.3); // Acelera com combo
 
-                // Projeção
-                const scale = 600 / (600 + t.z);
-                const screenX = w/2 + (t.x * w * 0.4 * scale);
-                const screenY = h/2 + (t.y * scale);
-                const radius = 70 * scale;
+                const scale = 800 / (800 + t.z);
+                const screenX = cx + (t.x * w * 0.4 * scale);
+                const screenY = cy + (t.y * scale);
+                const r = 80 * scale;
 
-                // Render
+                // Render Alvo
                 ctx.save();
                 ctx.shadowBlur = 20; ctx.shadowColor = t.color;
-                ctx.fillStyle = t.hit ? '#fff' : t.color; // Pisca branco se acertou
-                ctx.beginPath(); ctx.arc(screenX, screenY, radius, 0, Math.PI*2); ctx.fill();
                 
-                // Anel externo
-                ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
-                ctx.beginPath(); ctx.arc(screenX, screenY, radius*1.2, 0, Math.PI*2); ctx.stroke();
+                // Círculo Externo
+                ctx.strokeStyle = '#fff'; ctx.lineWidth = 4 * scale;
+                ctx.beginPath(); ctx.arc(screenX, screenY, r, 0, Math.PI*2); ctx.stroke();
+                
+                // Centro (Preenchido)
+                ctx.fillStyle = t.hit ? '#fff' : t.color;
+                ctx.beginPath(); ctx.arc(screenX, screenY, r*0.6, 0, Math.PI*2); ctx.fill();
                 
                 // Texto
-                ctx.fillStyle = '#fff'; ctx.font = `bold ${30*scale}px Arial`; 
-                ctx.textAlign = 'center'; ctx.textBaseline='middle';
+                ctx.fillStyle = '#000'; ctx.font=`bold ${r*0.5}px Arial`; 
+                ctx.textAlign='center'; ctx.textBaseline='middle';
                 ctx.fillText(t.label, screenX, screenY);
+                
                 ctx.restore();
 
-                // Colisão (Só processa se não foi hitado ainda e está perto)
-                if(!t.hit && t.z < 100 && t.z > -50 && pose) {
+                // Colisão
+                if(!t.hit && t.z < 150 && t.z > -50 && pose) {
+                    // Verifica Mãos
                     const handName = t.hand === 'L' ? 'left_wrist' : 'right_wrist';
-                    const hand = pose.keypoints.find(k=>k.name === handName);
+                    const hand = pose.keypoints.find(k=>k.name===handName);
                     
                     if(hand && hand.score > 0.3) {
                         const hPos = window.Gfx.map(hand, w, h);
                         const dist = Math.hypot(hPos.x - screenX, hPos.y - screenY);
                         
-                        if(dist < radius + 40) { // Hitbox generosa
+                        if(dist < r + 40) {
                             t.hit = true;
                             this.hitTarget(t, screenX, screenY);
                         }
-                    }
-                    // Bônus: Se for alvo 'B' (Both), aceita qualquer mão
-                    if(t.hand === 'B' && !t.hit) {
-                       // Logica simplificada para ambos
                     }
                 }
 
@@ -148,40 +138,40 @@
                 }
             });
 
-            // Remove alvos já acertados (depois de um frame para visualizar o hit)
-            this.targets = this.targets.filter(t => !(t.hit && t.z < 80));
-
-            // Partículas
+            // Limpeza
+            this.targets = this.targets.filter(t => !(t.hit && t.z < 50));
             this.updateParticles(ctx);
 
-            if(this.health <= 0) window.System.gameOver(this.score);
+            // HUD Vida
+            ctx.fillStyle = '#333'; ctx.fillRect(w/2 - 100, 20, 200, 10);
+            ctx.fillStyle = this.health > 30 ? '#0f0' : '#f00';
+            ctx.fillRect(w/2 - 100, 20, 200 * (this.health/100), 10);
 
+            if(this.health <= 0) window.System.gameOver(this.score);
             return this.score;
         },
 
-        spawnTarget: function(w, h, type, xOffset) {
+        spawnTarget: function(type, x) {
+            const color = type === 'L' ? '#00ffff' : (type === 'R' ? '#ff0055' : '#ffff00');
             this.targets.push({
-                x: xOffset,
-                y: 0, // Altura dos olhos
-                z: 2000,
-                color: type === 'L' ? '#00ffff' : (type === 'R' ? '#ff0055' : '#ffff00'),
+                x: x, y: 0, z: 2000,
+                color: color,
                 label: type,
-                hand: type,
+                hand: type === 'B' ? 'R' : type, // Simplificação
                 hit: false
             });
         },
 
         hitTarget: function(t, x, y) {
-            this.score += 100 + (this.combo * 10);
+            this.score += 100 + (this.combo*10);
             this.combo++;
-            window.Sfx.bump(); // Som de impacto grave
-            
-            // Explosão de Partículas
-            for(let i=0; i<15; i++) {
+            window.Sfx.bump();
+            // Partículas
+            for(let i=0; i<10; i++) {
                 this.particles.push({
-                    x: x, y: y,
-                    vx: (Math.random()-0.5)*20, vy: (Math.random()-0.5)*20,
-                    life: 1.0, color: t.color
+                    x:x, y:y, 
+                    vx:(Math.random()-0.5)*20, vy:(Math.random()-0.5)*20, 
+                    life:1, color: t.color
                 });
             }
         },
@@ -189,7 +179,7 @@
         updateParticles: function(ctx) {
             for(let i=this.particles.length-1; i>=0; i--) {
                 const p = this.particles[i];
-                p.x += p.vx; p.y += p.vy; p.life -= 0.05;
+                p.x += p.vx; p.y += p.vy; p.life -= 0.08;
                 if(p.life <= 0) this.particles.splice(i,1);
                 else {
                     ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
