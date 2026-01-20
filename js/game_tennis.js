@@ -215,11 +215,13 @@
         }
     };
 
-    // Register
-    const check = setInterval(() => {
-        if (window.System) {
+    // Registro Robusto
+    function tryRegister() {
+        if (window.System && typeof window.System.registerGame === 'function') {
             window.System.registerGame('tennis', 'Otto Tennis', '🎾', Logic);
-            clearInterval(check);
+        } else {
+            setTimeout(tryRegister, 200);
         }
-    }, 100);
+    }
+    tryRegister();
 })();

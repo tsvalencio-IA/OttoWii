@@ -168,6 +168,11 @@ window.System = {
             name, icon, logic,
             settings: { camOpacity: 0.3, showWheel: false, ...settings }
         };
+        console.log(`[System] Jogo registrado: ${name} (${id})`);
+        // Se o menu já estiver visível, atualiza ele
+        if (document.getElementById('channel-grid')) {
+            this.renderMenu();
+        }
     },
 
     async boot() {

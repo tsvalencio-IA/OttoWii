@@ -191,11 +191,13 @@
         }
     };
 
-    // Register
-    const check = setInterval(() => {
-        if (window.System) {
+    // Registro Robusto
+    function tryRegister() {
+        if (window.System && typeof window.System.registerGame === 'function') {
             window.System.registerGame('fight', 'Otto Boxing', '🥊', Logic);
-            clearInterval(check);
+        } else {
+            setTimeout(tryRegister, 200);
         }
-    }, 100);
+    }
+    tryRegister();
 })();

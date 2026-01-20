@@ -198,11 +198,13 @@
         }
     };
 
-    // Register
-    const check = setInterval(() => {
-        if (window.System) {
+    // Registro Robusto
+    function tryRegister() {
+        if (window.System && typeof window.System.registerGame === 'function') {
             window.System.registerGame('kart', 'Otto Kart', '🏎️', Logic, { showWheel: true });
-            clearInterval(check);
+        } else {
+            setTimeout(tryRegister, 200);
         }
-    }, 100);
+    }
+    tryRegister();
 })();
