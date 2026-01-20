@@ -1,8 +1,7 @@
 /**
  * =============================================================================
- * THIAGUINHO CORE v7.0 (STABLE MOBILE)
+ * THIAGUINHO CORE v10 (STRUCTURED FIX)
  * =============================================================================
- * Foco: Estabilidade no GitHub Pages + Visual Nintendo
  */
 
 window.Sfx = {
@@ -15,7 +14,6 @@ window.Sfx = {
     },
     play: function(freq, type, dur, vol=0.1) {
         if (!this.ctx) return;
-        // Tenta destravar audio suspenso (comum no Chrome Android)
         if (this.ctx.state === 'suspended') this.ctx.resume().catch(()=>{});
         try {
             const o = this.ctx.createOscillator();
@@ -27,7 +25,6 @@ window.Sfx = {
             o.start(); o.stop(this.ctx.currentTime + dur);
         } catch(e) {}
     },
-    // Sons Nintendo
     boot: function(){ this.play(660,'sine',0.1); setTimeout(()=>this.play(880,'sine',0.4),100); },
     click: function(){ this.play(1200,'sine',0.1); },
     jump: function(){ this.play(150,'square',0.2); }, 
@@ -51,10 +48,11 @@ window.System = {
     video: null, canvas: null, ctx: null, detector: null,
     activeGame: null, loopId: null, games: {},
 
-    // Registro seguro
+    // Sistema de Registro Robusto
     registerGame: function(id, meta, logic) {
-        console.log("Registrado: " + id);
+        console.log("Jogo Registrado:", id);
         this.games[id] = { meta, logic };
+        // Se o menu já estiver desenhado, redesenha para incluir o novo jogo
         if(document.getElementById('channel-grid')) this.renderMenu();
     },
 
@@ -103,7 +101,7 @@ window.System = {
         const keys = Object.keys(this.games);
         
         if(keys.length === 0) {
-            grid.innerHTML = "<p style='color:#999; grid-column:span 2; text-align:center'>Carregando...</p>";
+            grid.innerHTML = "<p style='color:#999; text-align:center; grid-column:span 2;'>Carregando Jogos...</p>";
             return;
         }
 
@@ -111,12 +109,12 @@ window.System = {
             const g = this.games[k];
             const div = document.createElement('div');
             div.className = 'channel';
+            // CLIQUE SEGURO
             div.onclick = function() { window.System.launch(k); };
             div.innerHTML = `<div class="channel-icon">${g.meta.icon}</div><div class="channel-title">${g.meta.name}</div>`;
             grid.appendChild(div);
         });
         
-        // Slots vazios para layout
         for(let i=keys.length; i<6; i++) {
             grid.innerHTML += `<div class="channel" style="opacity:0.3; border:2px dashed #ddd; cursor:default"></div>`;
         }
@@ -134,9 +132,11 @@ window.System = {
     launch: function(id) {
         try {
             const g = this.games[id];
-            if(!g) return;
+            if(!g) { alert("Jogo não encontrado!"); return; }
             
+            // Tenta tocar som, mas não para se falhar
             window.Sfx.click();
+            
             this.activeGame = g;
 
             document.getElementById('screen-menu').classList.add('hidden');
@@ -149,7 +149,11 @@ window.System = {
 
             if(g.logic.init) g.logic.init();
             if(!this.loopId) this.loop();
-        } catch(e) { console.error(e); this.menu(); }
+        } catch(e) { 
+            console.error(e);
+            alert("Erro ao abrir: " + e.message);
+            this.menu();
+        }
     },
 
     loop: async function() {
