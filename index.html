@@ -2,165 +2,186 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
+    <!-- VIEWPORT FIX: Impede zoom, ajusta para área segura do iPhone (notch) e força escala 1:1 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="theme-color" content="#3498db">
+    <meta name="theme-color" content="#ececec">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>ThIAguinho Wii Ultimate</title>
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>ThIAguinho Wii U</title>
     
-    <!-- Bibliotecas AI & Core -->
+    <!-- Dependências -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
-    
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
 
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@700&family=Nunito:wght@800&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=Nunito:wght@800&display=swap');
 
+        /* RESET GERAL PARA MOBILE */
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        
         body {
-            background-color: #1a1a1a;
+            background-color: #111;
             font-family: 'Nunito', sans-serif;
-            overflow: hidden;
-            touch-action: none;
+            overflow: hidden; /* Impede scroll elástico no iOS */
+            touch-action: none; /* Impede gestos do navegador */
             user-select: none;
+            width: 100vw;
+            height: 100dvh; /* Dynamic Viewport Height */
         }
 
-        /* HARDWARE LAYER */
+        /* LAYOUT CAMADAS */
         #layer-hw { position: absolute; inset: 0; z-index: 0; background: #000; }
         #webcam { 
             position: absolute; width: 100%; height: 100%; 
             object-fit: cover; transform: scaleX(-1); 
-            opacity: 0; transition: opacity 0.5s ease;
-            mix-blend-mode: overlay;
+            opacity: 0; transition: opacity 0.5s; 
+            mix-blend-mode: overlay; /* Mistura câmera com jogo sutilmente */
         }
         #game-canvas { width: 100%; height: 100%; display: block; }
 
-        /* OS LAYER */
+        /* INTERFACE (OS) */
         .screen { 
             position: absolute; inset: 0; 
             display: flex; flex-direction: column; 
             align-items: center; justify-content: center;
-            transition: opacity 0.4s, transform 0.4s;
+            transition: all 0.4s ease;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
         }
-        .hidden { opacity: 0; pointer-events: none; transform: scale(0.95); }
+        .hidden { opacity: 0; pointer-events: none; transform: scale(1.1); filter: blur(10px); }
 
-        /* GRID ESTILO WII U / SWITCH */
+        /* GRID DE CANAIS (RESPONSIVO REAL) */
         #channel-grid {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 1.5rem;
-            width: 90%;
-            max-width: 800px;
-        }
-        @media (min-width: 768px) {
-            #channel-grid { grid-template-columns: repeat(4, 1fr); }
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            grid-template-rows: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 12px;
+            width: 95%;
+            height: 70%;
+            max-width: 1000px;
+            perspective: 1000px;
         }
 
         .channel {
-            background: white;
-            border-radius: 1.5rem;
-            aspect-ratio: 16/10;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-            cursor: pointer;
-            transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
-            border: 4px solid transparent;
-        }
-        .channel:active { transform: scale(0.95); border-color: #3498db; }
-        .channel:hover { transform: translateY(-5px); box-shadow: 0 15px 30px rgba(0,0,0,0.15); }
-
-        /* BOTÕES & UI */
-        .btn-start {
-            background: linear-gradient(135deg, #3498db, #2980b9);
-            box-shadow: 0 8px 0 #1c6ea4, 0 15px 20px rgba(0,0,0,0.2);
+            background: linear-gradient(145deg, #ffffff, #e6e6e6);
+            border-radius: 16px;
+            border: 4px solid #fff;
+            box-shadow: 5px 5px 15px rgba(0,0,0,0.1), -5px -5px 15px rgba(255,255,255,0.8);
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            cursor: pointer; position: relative; overflow: hidden;
             transition: transform 0.1s;
         }
-        .btn-start:active {
-            transform: translateY(4px);
-            box-shadow: 0 4px 0 #1c6ea4, 0 8px 10px rgba(0,0,0,0.2);
+        .channel:active { transform: scale(0.95); border-color: #3498db; }
+        
+        /* ESTILO NINTENDO */
+        .btn-action {
+            background: linear-gradient(180deg, #2ecc71 0%, #27ae60 100%);
+            border: 2px solid #fff;
+            box-shadow: 0 4px 0 #1e8449, 0 10px 10px rgba(0,0,0,0.2);
+            color: white; font-weight: 900; text-transform: uppercase;
+            padding: 1rem 3rem; border-radius: 50px; font-size: 1.2rem;
+            transition: transform 0.1s;
+        }
+        .btn-action:active { transform: translateY(4px); box-shadow: 0 0 0 #1e8449; }
+
+        /* HUD DO JOGO */
+        #game-ui { pointer-events: none; }
+        .interactive { pointer-events: auto; }
+        
+        #hud-score { 
+            font-family: 'Chakra Petch', sans-serif; 
+            text-shadow: 2px 2px 0px #000;
         }
 
-        .animate-pop { animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
-        @keyframes popIn { from { opacity: 0; transform: scale(0.5); } to { opacity: 1; transform: scale(1); } }
+        /* ANIMAÇÕES */
+        @keyframes float { 0% { transform: translateY(0px); } 50% { transform: translateY(-10px); } 100% { transform: translateY(0px); } }
+        .float-anim { animation: float 3s ease-in-out infinite; }
     </style>
 </head>
 <body>
 
-    <!-- CAMADA DE HARDWARE -->
+    <!-- CAMADA 0: HARDWARE -->
     <div id="layer-hw">
         <video id="video-source" playsinline style="display:none"></video>
         <video id="webcam" autoplay muted playsinline></video>
         <canvas id="game-canvas"></canvas>
     </div>
 
-    <!-- SISTEMA OPERACIONAL -->
+    <!-- CAMADA 1: SISTEMA OPERACIONAL -->
     <div id="layer-os" class="relative z-50 w-full h-full pointer-events-none">
         
-        <!-- TELA DE SEGURANÇA / BOOT -->
-        <div id="screen-safety" class="screen pointer-events-auto bg-gray-100">
-            <div class="bg-white p-10 rounded-[2rem] text-center shadow-2xl max-w-md w-[90%] border-4 border-gray-200">
-                <div class="text-6xl mb-6">⚠️</div>
-                <h1 class="text-3xl font-black text-gray-800 mb-2">Área Segura</h1>
-                <p class="text-gray-500 mb-8 leading-relaxed">Garanta espaço livre ao seu redor. Afaste móveis e objetos.</p>
-                
-                <button onclick="window.System.boot()" class="btn-start w-full py-5 rounded-full text-white text-2xl font-black tracking-widest uppercase">
-                    Iniciar
-                </button>
-                
-                <div id="boot-log" class="mt-6 text-xs text-blue-400 font-mono h-4">Aguardando sistema...</div>
+        <!-- TELA DE SEGURANÇA -->
+        <div id="screen-safety" class="screen pointer-events-auto bg-gray-100 z-50">
+            <div class="bg-white p-6 rounded-3xl shadow-xl text-center max-w-sm w-[90%] border-4 border-gray-200 float-anim">
+                <div class="text-6xl mb-4">⚠️</div>
+                <h2 class="text-xl font-black text-gray-800 uppercase tracking-wider mb-2">Segurança</h2>
+                <p class="text-gray-500 text-sm mb-6">Certifique-se de que há espaço suficiente ao seu redor. Amarre o "Wiimote" (seu celular) se necessário.</p>
+                <button onclick="window.System.boot()" class="btn-action w-full">Entendido</button>
+                <div id="boot-log" class="mt-4 text-[10px] text-blue-400 font-mono font-bold h-4">SISTEMA AGUARDANDO...</div>
             </div>
         </div>
 
-        <!-- MENU PRINCIPAL -->
+        <!-- MENU PRINCIPAL (GRID WII) -->
         <div id="screen-menu" class="screen hidden bg-gray-100 pointer-events-auto">
-            <div class="absolute top-8 text-gray-400 font-bold tracking-[0.3em] text-xs">THIAGUINHO OS v4.0</div>
-            <div id="channel-grid"></div>
-        </div>
-
-        <!-- HUD DO JOGO (Overlay) -->
-        <div id="game-ui" class="screen hidden pointer-events-none">
-            <!-- Botão Home -->
-            <button onclick="window.System.menu()" class="pointer-events-auto absolute top-6 right-6 w-14 h-14 bg-white rounded-full shadow-lg border-4 border-gray-100 text-gray-400 font-bold hover:bg-red-50 hover:text-red-500 transition-colors">
-                ✕
-            </button>
-
-            <!-- Placar -->
-            <div class="absolute top-6 left-6 bg-white/90 backdrop-blur px-8 py-3 rounded-2xl shadow-lg border-l-8 border-blue-500">
-                <div class="text-xs text-gray-400 font-bold uppercase tracking-wider">Score</div>
-                <div id="hud-score" class="text-4xl font-black text-gray-800 font-mono leading-none">0</div>
+            <div class="w-full flex justify-between items-center px-6 mb-4">
+                <div class="text-gray-400 font-bold text-xs tracking-widest">ThIAguinho OS</div>
+                <div id="clock" class="text-gray-600 font-black text-xl">12:00</div>
             </div>
-
-            <!-- Toast Messages -->
-            <div id="game-msg" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white text-8xl font-black drop-shadow-[0_5px_5px_rgba(0,0,0,0.5)] scale-0 transition-transform duration-300 pointer-events-none whitespace-nowrap stroke-black" style="-webkit-text-stroke: 3px black;">
-                GO!
+            
+            <div id="channel-grid">
+                <!-- Canais injetados via JS -->
             </div>
-
-            <!-- Volante UI (Apenas Kart) -->
-            <div id="ui-wheel" class="absolute top-24 left-1/2 -translate-x-1/2 opacity-0 transition-opacity duration-500">
-                <!-- Renderizado via Canvas do jogo, placeholder para posicionamento -->
+            
+            <div class="mt-6 flex gap-4">
+                <div class="w-12 h-12 rounded-full bg-white shadow-md flex items-center justify-center border border-gray-200 text-gray-400 font-bold">✉️</div>
+                <div class="w-12 h-12 rounded-full bg-white shadow-md flex items-center justify-center border border-gray-200 text-gray-400 font-bold">⚙️</div>
             </div>
         </div>
 
-        <!-- GAME OVER -->
-        <div id="screen-over" class="screen hidden bg-white/95 backdrop-blur-xl pointer-events-auto">
-            <h1 class="text-6xl font-black text-gray-900 mb-2 tracking-tighter">FIM</h1>
-            <p class="text-gray-400 font-bold tracking-widest uppercase mb-8">Pontuação Final</p>
+        <!-- HUD DE JOGO -->
+        <div id="game-ui" class="screen hidden justify-start pt-4">
+            <!-- Top Bar -->
+            <div class="w-full flex justify-between items-start px-4">
+                <div class="bg-yellow-400 border-2 border-white shadow-lg rounded-full px-4 py-1 flex items-center gap-2">
+                    <span class="text-xs font-black text-yellow-800">PTS</span>
+                    <span id="hud-score" class="text-2xl font-black text-white">0000</span>
+                </div>
+                
+                <button onclick="window.System.menu()" class="interactive w-10 h-10 bg-white rounded-full shadow-lg border-2 border-gray-200 text-gray-500 font-bold flex items-center justify-center active:scale-90 transition-transform">
+                    ✕
+                </button>
+            </div>
+
+            <!-- Toast Message Central -->
+            <div id="game-msg" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-300 scale-0">
+                <span class="text-6xl font-black text-white stroke-black drop-shadow-xl" style="-webkit-text-stroke: 2px black;">START!</span>
+            </div>
             
-            <div id="final-score" class="text-9xl text-blue-500 font-black mb-12 drop-shadow-lg">0</div>
-            
-            <button onclick="window.System.menu()" class="btn-start px-12 py-4 rounded-full text-white text-xl font-bold uppercase">
-                Voltar ao Menu
-            </button>
+            <!-- Elementos Específicos (Injetados) -->
+            <div id="ui-overlay" class="absolute inset-0 pointer-events-none"></div>
+        </div>
+
+        <!-- TELA DE GAME OVER -->
+        <div id="screen-over" class="screen hidden bg-black/80 backdrop-blur-sm pointer-events-auto text-white">
+            <h1 class="text-5xl font-black mb-2 text-yellow-400 drop-shadow-md">TIME UP!</h1>
+            <p class="text-gray-300 text-sm font-bold uppercase tracking-widest mb-8">Resultado Final</p>
+            <div id="final-score" class="text-8xl font-black mb-12 font-mono">0</div>
+            <button onclick="window.System.menu()" class="btn-action">Menu Principal</button>
         </div>
 
     </div>
 
-    <!-- CARREGAMENTO DE MÓDULOS -->
+    <script>
+        // Relógio do Sistema
+        setInterval(() => {
+            const now = new Date();
+            document.getElementById('clock').innerText = now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }, 1000);
+    </script>
+
+    <!-- LOADERS -->
     <script src="js/core.js"></script>
     <script src="js/game_run.js"></script>
     <script src="js/game_kart.js"></script>
