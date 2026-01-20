@@ -3,120 +3,164 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="mobile-web-app-capable" content="yes">
-    <title>ThIAguinho Wii: Final</title>
+    <meta name="theme-color" content="#3498db">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>ThIAguinho Wii Ultimate</title>
     
+    <!-- Bibliotecas AI & Core -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
 
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;700&family=Russo+One&family=Roboto:wght@300;400;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@700&family=Nunito:wght@800&display=swap');
 
-        :root { --wii-blue: #3498db; }
-        
-        body { 
-            background-color: #111; margin: 0; padding: 0;
-            overflow: hidden; font-family: 'Roboto', sans-serif; 
-            touch-action: none; user-select: none; 
-            height: 100dvh; width: 100vw;
+        body {
+            background-color: #1a1a1a;
+            font-family: 'Nunito', sans-serif;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
         }
-        
+
+        /* HARDWARE LAYER */
         #layer-hw { position: absolute; inset: 0; z-index: 0; background: #000; }
-        #webcam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0; transition: opacity 0.5s; }
-        #game-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-        
-        #layer-os { position: relative; width: 100%; height: 100%; z-index: 50; pointer-events: none; }
-        
+        #webcam { 
+            position: absolute; width: 100%; height: 100%; 
+            object-fit: cover; transform: scaleX(-1); 
+            opacity: 0; transition: opacity 0.5s ease;
+            mix-blend-mode: overlay;
+        }
+        #game-canvas { width: 100%; height: 100%; display: block; }
+
+        /* OS LAYER */
         .screen { 
-            position: absolute; inset: 0; display: flex; flex-direction: column; 
-            align-items: center; justify-content: center; 
-            background: radial-gradient(circle at center, #fff, #ececec); 
-            pointer-events: auto; transition: opacity 0.3s; 
+            position: absolute; inset: 0; 
+            display: flex; flex-direction: column; 
+            align-items: center; justify-content: center;
+            transition: opacity 0.4s, transform 0.4s;
         }
-        .hidden { opacity: 0; pointer-events: none; z-index: -1; }
+        .hidden { opacity: 0; pointer-events: none; transform: scale(0.95); }
 
-        /* GRADE MOBILE OTIMIZADA (2 COLUNAS) */
-        .wii-grid { 
-            display: grid; 
-            grid-template-columns: repeat(2, 1fr); 
-            gap: 15px; 
-            width: 95%; max-width: 600px; 
-            padding: 20px;
+        /* GRID ESTILO WII U / SWITCH */
+        #channel-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.5rem;
+            width: 90%;
+            max-width: 800px;
         }
-        @media (min-width: 768px) { .wii-grid { grid-template-columns: repeat(4, 1fr); max-width: 900px; } }
-        
-        .channel { 
-            background: #fff; border-radius: 20px; border: 4px solid #fff; 
-            aspect-ratio: 16/10; 
-            display: flex; flex-direction: column; align-items: center; justify-content: center; 
-            box-shadow: 0 8px 20px rgba(0,0,0,0.1); 
-            cursor: pointer; transition: transform 0.1s; 
+        @media (min-width: 768px) {
+            #channel-grid { grid-template-columns: repeat(4, 1fr); }
         }
-        .channel:active { transform: scale(0.95); border-color: var(--wii-blue); background: #eef; }
-        
-        .channel-icon { font-size: 3.5rem; margin-bottom: 5px; pointer-events: none; }
-        .channel-title { font-family: 'Chakra Petch', sans-serif; font-weight: 700; color: #555; font-size: 0.8rem; pointer-events: none; text-transform: uppercase; }
 
-        .btn-wii {
-            background: linear-gradient(180deg, #3498db 0%, #2980b9 100%);
-            color: white; padding: 15px 50px; border-radius: 50px;
-            font-size: 1.5rem; font-weight: 900; text-transform: uppercase;
-            border: 3px solid rgba(255,255,255,0.3);
-            box-shadow: 0 10px 20px rgba(52, 152, 219, 0.4);
+        .channel {
+            background: white;
+            border-radius: 1.5rem;
+            aspect-ratio: 16/10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+            border: 4px solid transparent;
         }
-        .btn-wii:active { transform: scale(0.95); }
+        .channel:active { transform: scale(0.95); border-color: #3498db; }
+        .channel:hover { transform: translateY(-5px); box-shadow: 0 15px 30px rgba(0,0,0,0.15); }
 
-        #hud-score { font-family: 'Russo One', sans-serif; text-shadow: 2px 2px 0 #000; }
-        #game-msg { text-shadow: 0 5px 10px rgba(0,0,0,0.5); -webkit-text-stroke: 2px black; }
+        /* BOTÕES & UI */
+        .btn-start {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            box-shadow: 0 8px 0 #1c6ea4, 0 15px 20px rgba(0,0,0,0.2);
+            transition: transform 0.1s;
+        }
+        .btn-start:active {
+            transform: translateY(4px);
+            box-shadow: 0 4px 0 #1c6ea4, 0 8px 10px rgba(0,0,0,0.2);
+        }
+
+        .animate-pop { animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        @keyframes popIn { from { opacity: 0; transform: scale(0.5); } to { opacity: 1; transform: scale(1); } }
     </style>
 </head>
 <body>
 
+    <!-- CAMADA DE HARDWARE -->
     <div id="layer-hw">
         <video id="video-source" playsinline style="display:none"></video>
         <video id="webcam" autoplay muted playsinline></video>
         <canvas id="game-canvas"></canvas>
     </div>
 
-    <div id="layer-os">
+    <!-- SISTEMA OPERACIONAL -->
+    <div id="layer-os" class="relative z-50 w-full h-full pointer-events-none">
         
-        <div id="screen-safety" class="screen" style="z-index: 100;">
-            <div class="bg-white p-8 rounded-3xl text-center shadow-2xl border-4 border-gray-200 max-w-sm">
-                <div class="text-6xl mb-4">🍄</div>
-                <h1 class="text-2xl font-black text-gray-700 mb-2">ThIAguinho Wii</h1>
-                <p class="text-gray-400 mb-8 font-medium">Sistema Pronto</p>
-                <button onclick="window.System.boot()" class="btn-wii animate-pulse">LIGAR</button>
-                <div id="boot-log" class="mt-4 text-xs text-blue-400 font-mono font-bold">AGUARDANDO...</div>
+        <!-- TELA DE SEGURANÇA / BOOT -->
+        <div id="screen-safety" class="screen pointer-events-auto bg-gray-100">
+            <div class="bg-white p-10 rounded-[2rem] text-center shadow-2xl max-w-md w-[90%] border-4 border-gray-200">
+                <div class="text-6xl mb-6">⚠️</div>
+                <h1 class="text-3xl font-black text-gray-800 mb-2">Área Segura</h1>
+                <p class="text-gray-500 mb-8 leading-relaxed">Garanta espaço livre ao seu redor. Afaste móveis e objetos.</p>
+                
+                <button onclick="window.System.boot()" class="btn-start w-full py-5 rounded-full text-white text-2xl font-black tracking-widest uppercase">
+                    Iniciar
+                </button>
+                
+                <div id="boot-log" class="mt-6 text-xs text-blue-400 font-mono h-4">Aguardando sistema...</div>
             </div>
         </div>
 
-        <div id="screen-menu" class="screen hidden">
-            <div class="wii-grid" id="channel-grid"></div>
-            <div class="absolute bottom-4 text-gray-400 font-bold">v.Nintendo</div>
+        <!-- MENU PRINCIPAL -->
+        <div id="screen-menu" class="screen hidden bg-gray-100 pointer-events-auto">
+            <div class="absolute top-8 text-gray-400 font-bold tracking-[0.3em] text-xs">THIAGUINHO OS v4.0</div>
+            <div id="channel-grid"></div>
         </div>
 
-        <div id="game-ui" class="screen hidden" style="background: transparent;">
-            <button onclick="window.System.menu()" class="absolute top-4 right-4 w-14 h-14 bg-white rounded-full font-bold shadow-lg text-2xl text-gray-600 border-4 border-gray-200 z-50">✕</button>
-            <div class="absolute top-4 left-4 bg-blue-600 text-white px-6 py-2 rounded-full font-bold text-2xl border-2 border-white shadow-lg">
-                <span id="hud-score">0</span>
+        <!-- HUD DO JOGO (Overlay) -->
+        <div id="game-ui" class="screen hidden pointer-events-none">
+            <!-- Botão Home -->
+            <button onclick="window.System.menu()" class="pointer-events-auto absolute top-6 right-6 w-14 h-14 bg-white rounded-full shadow-lg border-4 border-gray-100 text-gray-400 font-bold hover:bg-red-50 hover:text-red-500 transition-colors">
+                ✕
+            </button>
+
+            <!-- Placar -->
+            <div class="absolute top-6 left-6 bg-white/90 backdrop-blur px-8 py-3 rounded-2xl shadow-lg border-l-8 border-blue-500">
+                <div class="text-xs text-gray-400 font-bold uppercase tracking-wider">Score</div>
+                <div id="hud-score" class="text-4xl font-black text-gray-800 font-mono leading-none">0</div>
             </div>
-            <div id="game-msg" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white text-7xl font-black scale-0 transition-transform duration-300 pointer-events-none whitespace-nowrap">GO!</div>
+
+            <!-- Toast Messages -->
+            <div id="game-msg" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white text-8xl font-black drop-shadow-[0_5px_5px_rgba(0,0,0,0.5)] scale-0 transition-transform duration-300 pointer-events-none whitespace-nowrap stroke-black" style="-webkit-text-stroke: 3px black;">
+                GO!
+            </div>
+
+            <!-- Volante UI (Apenas Kart) -->
+            <div id="ui-wheel" class="absolute top-24 left-1/2 -translate-x-1/2 opacity-0 transition-opacity duration-500">
+                <!-- Renderizado via Canvas do jogo, placeholder para posicionamento -->
+            </div>
+        </div>
+
+        <!-- GAME OVER -->
+        <div id="screen-over" class="screen hidden bg-white/95 backdrop-blur-xl pointer-events-auto">
+            <h1 class="text-6xl font-black text-gray-900 mb-2 tracking-tighter">FIM</h1>
+            <p class="text-gray-400 font-bold tracking-widest uppercase mb-8">Pontuação Final</p>
             
-            <div id="ui-wheel" class="absolute top-24 left-1/2 -translate-x-1/2 transition-opacity duration-300 opacity-0 pointer-events-none">
-                <div id="visual-wheel" style="width: 200px; height: 200px; border: 15px solid rgba(255,255,255,0.8); border-radius: 50%; border-top-color: #ff0000; transform: rotate(0deg);"></div>
-            </div>
+            <div id="final-score" class="text-9xl text-blue-500 font-black mb-12 drop-shadow-lg">0</div>
+            
+            <button onclick="window.System.menu()" class="btn-start px-12 py-4 rounded-full text-white text-xl font-bold uppercase">
+                Voltar ao Menu
+            </button>
         </div>
 
-        <div id="screen-over" class="screen hidden" style="background: rgba(255,255,255,0.95); backdrop-filter: blur(10px);">
-            <h1 class="text-5xl font-black text-gray-800 mb-2">FIM</h1>
-            <div id="final-score" class="text-9xl text-blue-500 font-black mb-10">0</div>
-            <button onclick="window.System.menu()" class="btn-wii bg-gray-500">MENU</button>
-        </div>
     </div>
 
+    <!-- CARREGAMENTO DE MÓDULOS -->
     <script src="js/core.js"></script>
     <script src="js/game_run.js"></script>
     <script src="js/game_kart.js"></script>
