@@ -1,17 +1,16 @@
 /**
  * =============================================================================
- * SUPER OTTO WORLD - 3D RUNNER ENGINE (FIXED)
+ * SUPER OTTO WORLD - PLATAFORMA 2.5D
  * =============================================================================
- * Estilo: Mario Run / Crash Bandicoot
- * Mecânica: Controle por Posição do Nariz (Esquerda/Direita) e Agachamento/Pulo.
+ * Estilo: New Super Mario Bros (Wii)
  */
 
 (function() {
     const PHYS = {
-        GRAVITY: 0.6,
-        JUMP_FORCE: -18,
-        SPEED_BASE: 12,
-        SPEED_MAX: 25,
+        GRAVITY: 0.65,
+        JUMP_FORCE: -16,
+        SPEED_START: 12,
+        SPEED_MAX: 22,
         LANE_WIDTH: 220
     };
 
@@ -19,242 +18,262 @@
         score: 0,
         distance: 0,
         speed: 0,
-        state: 'calibrate', 
+        state: 'play',
         
-        // Jogador
         player: { 
             lane: 0, 
             visualX: 0, 
             y: 0, vy: 0, 
-            groundY: 0,
-            isJumping: false
+            jumping: false 
         },
 
-        // Calibração
-        baseY: 0,
-        calibSamples: [],
-
-        // Listas de Objetos (Inicializadas no init)
         objects: [],
         clouds: [],
 
-        init() {
+        init: function() {
             this.score = 0;
             this.distance = 0;
-            this.speed = PHYS.SPEED_BASE;
-            this.state = 'calibrate';
-            this.calibSamples = [];
-            
-            // LIMPEZA SEGURA DAS LISTAS
+            this.speed = PHYS.SPEED_START;
+            this.state = 'play';
             this.objects = [];
-            this.clouds = []; // Garante que a lista existe
+            this.clouds = [];
             
-            // Gera nuvens iniciais
-            for(let i=0; i<5; i++) this.addCloud(true);
+            // Cria nuvens iniciais
+            for(let i=0; i<6; i++) this.addCloud(true);
             
-            this.player = { lane:0, visualX:0, y:0, vy:0, groundY:0, isJumping:false };
-            window.System.msg("FIQUE PARADO");
+            this.player = { lane:0, visualX:0, y:0, vy:0, jumping:false };
+            window.System.msg("CORRA!");
         },
 
-        update(ctx, w, h, pose) {
+        update: function(ctx, w, h, pose) {
             const cx = w/2;
-            const horizon = h * 0.4;
-            this.player.groundY = h - 50;
+            const horizon = h * 0.45;
 
-            // 1. INPUT
+            // 1. INPUT (Nariz para os lados, Pulo por altura)
             if(pose) {
-                const nose = pose.keypoints.find(k => k.name === 'nose');
+                const nose = pose.keypoints.find(k=>k.name==='nose');
                 if(nose && nose.score > 0.4) {
-                    if(this.state === 'calibrate') {
-                        this.calibSamples.push(nose.y);
-                        
-                        // UI Calibração
-                        ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(0,0,w,h);
-                        ctx.fillStyle = '#fff'; ctx.font = '30px Arial'; ctx.textAlign = 'center';
-                        ctx.fillText("CALIBRANDO...", cx, h/2);
-                        ctx.fillStyle = '#3498db'; 
-                        ctx.fillRect(cx - 100, h/2 + 40, (this.calibSamples.length/60)*200, 20);
+                    // Faixas
+                    const nx = nose.x / 640;
+                    if(nx < 0.4) this.player.lane = 1;
+                    else if(nx > 0.6) this.player.lane = -1;
+                    else this.player.lane = 0;
 
-                        if(this.calibSamples.length > 60) {
-                            this.baseY = this.calibSamples.reduce((a,b)=>a+b) / this.calibSamples.length;
-                            this.state = 'play';
-                            window.System.msg("VAI!");
-                            window.Sfx.boot();
-                        }
-                        return 0;
-                    }
-                    else if(this.state === 'play') {
-                        const nx = nose.x / 640; 
-                        if(nx < 0.35) this.player.lane = 1;      
-                        else if(nx > 0.65) this.player.lane = -1;
-                        else this.player.lane = 0;
-
-                        if(nose.y < this.baseY - 40 && !this.player.isJumping) {
-                            this.player.vy = PHYS.JUMP_FORCE;
-                            this.player.isJumping = true;
-                            window.Sfx.jump();
-                        }
+                    // Pulo (Se o nariz subir na tela)
+                    if(nose.y < 200 && !this.player.jumping) {
+                        this.player.vy = PHYS.JUMP_FORCE;
+                        this.player.jumping = true;
+                        window.Sfx.jump();
                     }
                 }
             }
 
             // 2. FÍSICA
-            if(this.state === 'play') {
-                if(this.speed < PHYS.SPEED_MAX) this.speed += 0.005;
-                this.distance += this.speed;
-                this.score = Math.floor(this.distance/10);
+            if(this.speed < PHYS.SPEED_MAX) this.speed += 0.005;
+            this.distance += this.speed;
+            this.score = Math.floor(this.distance/10);
 
-                this.player.y += this.player.vy;
-                this.player.vy += PHYS.GRAVITY;
-
-                if(this.player.y > 0) {
-                    this.player.y = 0;
-                    this.player.vy = 0;
-                    this.player.isJumping = false;
-                }
-
-                const targetX = this.player.lane * PHYS.LANE_WIDTH;
-                this.player.visualX += (targetX - this.player.visualX) * 0.15;
-
-                this.spawnManager();
-                if(Math.random() < 0.01) this.addCloud();
-                this.updateObjects();
+            // Gravidade
+            this.player.y += this.player.vy;
+            this.player.vy += PHYS.GRAVITY;
+            
+            // Chão
+            if(this.player.y > 0) {
+                this.player.y = 0;
+                this.player.vy = 0;
+                this.player.jumping = false;
             }
 
-            // 3. RENDER
-            const grad = ctx.createLinearGradient(0,0,0,horizon);
-            grad.addColorStop(0, '#5c94fc'); grad.addColorStop(1, '#95b8ff');
-            ctx.fillStyle = grad; ctx.fillRect(0,0,w,h);
+            // Suaviza X
+            const targetX = this.player.lane * PHYS.LANE_WIDTH;
+            this.player.visualX += (targetX - this.player.visualX) * 0.15;
 
+            // Gera Obstáculos
+            this.spawnManager();
+            if(Math.random() < 0.02) this.addCloud();
+            this.updateEntities();
+
+            // 3. RENDER (Estilo Nintendo)
+            
+            // Céu Azul Degradê
+            const grad = ctx.createLinearGradient(0,0,0,horizon);
+            grad.addColorStop(0, '#5c94fc'); 
+            grad.addColorStop(1, '#95b8ff');
+            ctx.fillStyle = grad; 
+            ctx.fillRect(0,0,w,h);
+
+            // Nuvens
             this.drawClouds(ctx, w, h);
+
+            // Grama
+            ctx.fillStyle = '#00aa00'; 
+            ctx.fillRect(0, horizon, w, h-horizon);
             
-            ctx.fillStyle = '#00AA00'; ctx.fillRect(0, horizon, w, h-horizon);
-            
-            // Pista
-            const roadTop = w * 0.1; const roadBot = w * 1.5;
+            // Pista de Terra
+            const roadTop = 20; 
+            const roadBot = w * 0.8;
             ctx.fillStyle = '#e67e22'; 
             ctx.beginPath();
-            ctx.moveTo(cx - roadTop, horizon); ctx.lineTo(cx + roadTop, horizon);
-            ctx.lineTo(cx + roadBot, h); ctx.lineTo(cx - roadBot, h);
+            ctx.moveTo(cx - roadTop, horizon); 
+            ctx.lineTo(cx + roadTop, horizon);
+            ctx.lineTo(cx + roadBot, h); 
+            ctx.lineTo(cx - roadBot, h);
             ctx.fill();
+            
+            // Linhas da Pista
+            ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(cx, horizon); ctx.lineTo(cx, h); ctx.stroke();
 
-            // Objetos
-            this.objects.sort((a,b) => b.z - a.z);
-            this.objects.forEach(o => this.drawObject(ctx, o, w, h, horizon));
+            // Objetos (Z-Sort)
+            this.objects.sort((a,b)=>b.z-a.z).forEach(o => this.drawObj(ctx, o, w, h, horizon));
 
-            // Jogador
-            this.drawMario(ctx, cx + this.player.visualX, this.player.groundY + this.player.y, this.player.isJumping);
+            // Mario (Player)
+            this.drawMario(ctx, cx + this.player.visualX, h - 50 + this.player.y, this.player.jumping);
 
             return this.score;
         },
 
-        spawnManager() {
-            const lastObj = this.objects[this.objects.length-1];
-            if(!lastObj || (2500 - lastObj.z) > 400) {
-                if(Math.random() < 0.05) {
-                    const type = Math.random() < 0.6 ? 'pipe' : 'block';
-                    const lane = Math.floor(Math.random()*3)-1;
-                    this.objects.push({ z: 2500, lane: lane, type: type, passed: false });
+        spawnManager: function() {
+            const last = this.objects[this.objects.length-1];
+            if(!last || (3000 - last.z) > 500) {
+                if(Math.random() < 0.06) {
+                    this.objects.push({
+                        z: 3000,
+                        lane: Math.floor(Math.random()*3)-1,
+                        type: Math.random()>0.5 ? 'pipe' : 'block'
+                    });
                 }
             }
         },
 
-        updateObjects() {
-            for(let i = this.objects.length-1; i>=0; i--) {
+        updateEntities: function() {
+            for(let i=this.objects.length-1; i>=0; i--) {
                 const o = this.objects[i];
                 o.z -= this.speed * 1.5;
-
+                
+                // Colisão
                 if(o.z < 100 && o.z > -100 && o.lane === this.player.lane) {
                     let hit = true;
-                    if(this.player.y < -150) hit = false; 
+                    // Se pular alto o suficiente, passa
+                    if(this.player.y < -120) hit = false;
 
                     if(hit) {
                         window.Gfx.shake(20);
                         window.System.gameOver(this.score);
-                    } else if (!o.passed) {
+                    } else if(!o.passed) {
                         o.passed = true;
                         window.Sfx.coin();
                     }
                 }
-                if(o.z < -300) this.objects.splice(i, 1);
+                
+                if(o.z < -200) this.objects.splice(i,1);
             }
         },
 
-        addCloud(randomZ = false) {
-            // SEGURANÇA: Garante que a lista existe
-            if (!this.clouds) this.clouds = [];
+        addCloud: function(start) {
             this.clouds.push({
-                x: (Math.random()-0.5) * 3000,
-                y: Math.random() * 200,
-                z: randomZ ? Math.random() * 2000 : 3000,
-                size: 50 + Math.random()*50
+                x: (Math.random()-0.5)*3000,
+                y: Math.random()*200,
+                z: start ? Math.random()*3000 : 3000,
+                s: 50+Math.random()*50
             });
         },
 
-        drawObject(ctx, o, w, h, hor) {
-            const scale = 400 / (400 + o.z);
-            const x = (w/2) + (o.lane * PHYS.LANE_WIDTH * scale * 2);
-            const y = hor + ((h-hor) * scale);
-            const s = 150 * scale;
-
-            if(o.type === 'pipe') {
-                ctx.fillStyle = '#00aa00';
-                ctx.fillRect(x - s/2, y - s, s, s);
-                ctx.strokeStyle = '#004400'; ctx.lineWidth = 2; ctx.strokeRect(x - s/2, y - s, s, s);
-            } else {
-                ctx.fillStyle = '#f1c40f';
-                ctx.fillRect(x - s/2, y - s*2.5, s, s);
-                ctx.fillStyle = '#fff'; ctx.font = `bold ${s*0.8}px monospace`;
-                ctx.textAlign = 'center'; ctx.fillText('?', x, y - s*1.7);
-            }
-        },
-
-        drawMario(ctx, x, y, jumping) {
-            if(jumping) {
-                ctx.fillStyle = 'rgba(0,0,0,0.2)';
-                ctx.beginPath(); ctx.ellipse(x, y - this.player.y, 40, 10, 0, 0, Math.PI*2); ctx.fill();
-            }
-            
-            // Corpo
-            ctx.fillStyle = '#0000ff'; ctx.fillRect(x - 20, y - 60, 40, 40);
-            // Camisa
-            ctx.fillStyle = '#ff0000';
-            if(jumping) { ctx.fillRect(x - 35, y - 75, 15, 30); ctx.fillRect(x + 20, y - 75, 15, 30); }
-            else { ctx.fillRect(x - 35, y - 65, 15, 30); ctx.fillRect(x + 20, y - 65, 15, 30); }
-            
-            // Cabeça
-            ctx.fillStyle = '#ffccaa'; ctx.beginPath(); ctx.arc(x, y - 75, 25, 0, Math.PI*2); ctx.fill();
-            // Chapéu
-            ctx.fillStyle = '#ff0000'; ctx.beginPath(); ctx.arc(x, y - 85, 26, 0, Math.PI, true); ctx.fill();
-            ctx.fillRect(x - 28, y - 85, 65, 10);
-            
-            // Logo M
-            ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y - 90, 10, 0, Math.PI*2); ctx.fill();
-            ctx.fillStyle = '#ff0000'; ctx.font = 'bold 15px Arial'; ctx.textAlign = 'center'; ctx.fillText('M', x, y - 85);
-        },
-
-        drawClouds(ctx, w, h) {
-            // SEGURANÇA CONTRA CRASH
-            if(!this.clouds) return; 
-            
+        drawClouds: function(ctx, w, h) {
             ctx.fillStyle = 'rgba(255,255,255,0.8)';
             this.clouds.forEach(c => {
                 c.z -= this.speed * 0.5;
                 if(c.z < 100) c.z = 3000;
-
-                const scale = 1000 / c.z;
-                const cx = (w/2) + (c.x * scale);
-                const cy = (h*0.4) - (c.y * scale);
-                const size = c.size * scale;
-
+                
+                const s = 1000/c.z;
+                const cx = w/2 + c.x * s;
+                const cy = h*0.4 - c.y * s;
+                const size = c.s * s;
+                
                 ctx.beginPath();
                 ctx.arc(cx, cy, size, 0, Math.PI*2);
-                ctx.arc(cx + size, cy + size*0.2, size*0.8, 0, Math.PI*2);
-                ctx.arc(cx - size, cy + size*0.2, size*0.8, 0, Math.PI*2);
+                ctx.arc(cx+size, cy+size*0.2, size*0.8, 0, Math.PI*2);
+                ctx.arc(cx-size, cy+size*0.2, size*0.8, 0, Math.PI*2);
                 ctx.fill();
             });
+        },
+
+        drawObj: function(ctx, o, w, h, hor) {
+            const s = 400/(400+o.z);
+            const x = w/2 + (o.lane * PHYS.LANE_WIDTH * s * 2.5);
+            const y = hor + (h-hor)*s;
+            const size = 150 * s;
+
+            if(o.type === 'pipe') {
+                // Cano Clássico
+                ctx.fillStyle = '#00aa00'; 
+                ctx.fillRect(x-size/2, y-size, size, size);
+                ctx.fillStyle = '#00cc00'; // Brilho
+                ctx.fillRect(x-size/2+5, y-size, size*0.1, size);
+                
+                // Topo do Cano
+                ctx.fillStyle = '#008800'; 
+                ctx.fillRect(x-size*0.6, y-size*1.2, size*1.2, size*0.4);
+                ctx.strokeStyle = '#003300'; ctx.lineWidth = 2;
+                ctx.strokeRect(x-size*0.6, y-size*1.2, size*1.2, size*0.4);
+            } else {
+                // Bloco ?
+                ctx.fillStyle = '#f1c40f'; 
+                ctx.fillRect(x-size/2, y-size*2, size, size);
+                ctx.fillStyle = '#d35400';
+                ctx.fillRect(x-size/2, y-size*2, size, size*0.1); // Sombra 3D
+                
+                ctx.fillStyle = '#fff'; 
+                ctx.font = `bold ${size*0.8}px monospace`;
+                ctx.textAlign = 'center';
+                ctx.fillText('?', x, y-size*1.2);
+            }
+        },
+
+        drawMario: function(ctx, x, y, jump) {
+            // Sombra
+            if(jump) {
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.beginPath(); ctx.ellipse(x, y-this.player.y, 40, 10, 0, 0, Math.PI*2); ctx.fill();
+            }
+
+            // Corpo Azul
+            ctx.fillStyle = '#0039e6'; 
+            ctx.fillRect(x-20, y-60, 40, 40);
+            
+            // Camisa Vermelha
+            ctx.fillStyle = '#e60000';
+            if(jump) {
+                ctx.fillRect(x-35, y-75, 15, 30); // Braço Esq
+                ctx.fillRect(x+20, y-75, 15, 30); // Braço Dir
+            } else {
+                ctx.fillRect(x-35, y-65, 15, 30);
+                ctx.fillRect(x+20, y-65, 15, 30);
+            }
+
+            // Cabeça
+            ctx.fillStyle = '#ffccaa'; 
+            ctx.beginPath(); ctx.arc(x, y-75, 25, 0, Math.PI*2); ctx.fill();
+
+            // Bigode
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x-10, y-70, 25, 8);
+            ctx.fillRect(x-5, y-62, 10, 5); // Queixo
+
+            // Chapéu com Aba
+            ctx.fillStyle = '#e60000';
+            ctx.beginPath(); ctx.arc(x, y-85, 26, 0, Math.PI, true); ctx.fill();
+            ctx.fillRect(x-28, y-85, 65, 12);
+
+            // Emblema M
+            ctx.fillStyle = '#fff'; 
+            ctx.beginPath(); ctx.arc(x, y-92, 10, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = 'red'; 
+            ctx.font = 'bold 14px Arial'; 
+            ctx.textAlign = 'center'; 
+            ctx.fillText('M', x, y-88);
         }
     };
 
-    window.System.registerGame('run', { name: 'Super Otto', icon: '🍄', camOpacity: 0.1 }, Logic);
+    window.System.registerGame('run', { name: 'Super Otto', icon: '🍄', camOpacity: 0.2 }, Logic);
 })();
