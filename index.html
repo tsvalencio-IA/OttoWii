@@ -13,131 +13,29 @@
     <script src="https://cdn.tailwindcss.com"></script>
 
     <style>
+        /* Estilo Visual (Mantido o bonito) */
         @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;700&family=Russo+One&family=Roboto:wght@300;400;700&display=swap');
-
-        :root { 
-            --wii-gray: #ececec; 
-            --wii-blue: #3498db; 
-            --wii-glow: rgba(52, 152, 219, 0.4);
-        }
+        :root { --wii-blue: #3498db; }
+        body { background-color: #111; margin: 0; overflow: hidden; font-family: 'Roboto', sans-serif; touch-action: none; user-select: none; }
         
-        body { 
-            background-color: #111; 
-            margin: 0; padding: 0; 
-            overflow: hidden; 
-            font-family: 'Roboto', sans-serif; 
-            touch-action: none; 
-            user-select: none; 
-            width: 100vw; height: 100dvh; 
-        }
-        
-        /* HARDWARE LAYER */
         #layer-hw { position: absolute; inset: 0; z-index: 0; background: #000; }
-        #webcam { 
-            position: absolute; inset: 0; width: 100%; height: 100%; 
-            object-fit: cover; transform: scaleX(-1); opacity: 0; 
-            transition: opacity 1s ease; mix-blend-mode: overlay;
-        }
+        #webcam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0; }
         #game-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
         
-        /* OS LAYER */
         #layer-os { position: relative; width: 100%; height: 100%; z-index: 50; pointer-events: none; }
-        
-        .screen { 
-            position: absolute; inset: 0; 
-            display: flex; flex-direction: column; align-items: center; justify-content: center; 
-            background: radial-gradient(circle at center, #fff, #ddd); 
-            pointer-events: auto; 
-            transition: opacity 0.3s;
-        }
+        .screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(circle at center, #fff, #ddd); pointer-events: auto; transition: opacity 0.3s; }
         .hidden { opacity: 0; pointer-events: none; z-index: -1; }
 
-        /* WII MENU GRID */
-        .wii-grid { 
-            display: grid; 
-            grid-template-columns: repeat(4, 1fr); 
-            grid-template-rows: repeat(3, 1fr); 
-            gap: 15px; 
-            width: 90%; max-width: 1000px; aspect-ratio: 16/9;
-            padding: 20px;
-        }
-        
-        .channel { 
-            background: #fff; 
-            border-radius: 20px; 
-            border: 4px solid #fff; 
-            display: flex; flex-direction: column; align-items: center; justify-content: center; 
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1), inset 0 0 20px rgba(0,0,0,0.05); 
-            cursor: pointer; position: relative; overflow: hidden;
-            transition: transform 0.1s, border-color 0.2s;
-        }
-        .channel:active { transform: scale(0.95); border-color: var(--wii-blue); background: #f0f8ff; }
-        
-        .channel-icon { font-size: 3rem; margin-bottom: 5px; pointer-events: none; }
-        .channel-title { font-family: 'Chakra Petch', sans-serif; font-weight: 700; color: #555; text-transform: uppercase; font-size: 0.7rem; pointer-events: none; }
+        .channel { background: #fff; border-radius: 20px; border: 4px solid #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.1s; aspect-ratio: 16/9; }
+        .channel:active { transform: scale(0.95); border-color: var(--wii-blue); background: #eef; }
+        .channel-icon { font-size: 3rem; pointer-events: none; }
+        .channel-title { font-weight: 700; color: #555; font-size: 0.7rem; pointer-events: none; text-transform: uppercase; }
 
-        /* WII BOTTOM BAR */
-        .bottom-bar {
-            position: absolute; bottom: 0; width: 100%; height: 80px;
-            background: linear-gradient(to bottom, #ddd, #bbb);
-            border-top: 1px solid #fff;
-            display: flex; align-items: center; justify-content: space-between;
-            padding: 0 40px; box-shadow: 0 -5px 10px rgba(0,0,0,0.1);
-        }
-        .wii-circle-btn {
-            width: 50px; height: 50px; border-radius: 50%;
-            background: radial-gradient(circle at 30% 30%, #fff, #ccc);
-            display: flex; align-items: center; justify-content: center;
-            color: #555; font-weight: bold; border: 2px solid #aaa;
-            box-shadow: 0 4px 5px rgba(0,0,0,0.2); cursor: pointer;
-        }
-
-        /* IN-GAME HUD */
-        #game-ui { pointer-events: none; }
-        .hud-panel {
-            pointer-events: auto;
-            background: rgba(255, 255, 255, 0.85);
-            backdrop-filter: blur(8px);
-            padding: 10px 25px; border-radius: 30px;
-            border: 2px solid #fff;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-            display: flex; align-items: center; gap: 10px;
-        }
-        .score-big { font-family: 'Russo One', sans-serif; font-size: 2rem; color: #333; line-height: 1; }
-        .score-label { font-size: 0.7rem; color: var(--wii-blue); font-weight: bold; letter-spacing: 1px; }
-
-        /* POPUP MESSAGES */
-        #game-msg {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0);
-            font-family: 'Russo One', sans-serif; font-size: 5rem; 
-            color: #fff; text-transform: uppercase;
-            text-shadow: 0 5px 0 #ccc, 0 10px 20px rgba(0,0,0,0.3);
-            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            pointer-events: none; white-space: nowrap;
-        }
-        #game-msg.pop { transform: translate(-50%, -50%) scale(1); }
-
-        /* ERROR CONSOLE (Mobile Debug) */
-        #debug-console {
-            position: fixed; top: 0; left: 0; width: 100%; background: rgba(200, 0, 0, 0.9); color: white;
-            font-size: 12px; padding: 10px; z-index: 9999; display: none; font-family: monospace;
-        }
-
-        /* BUTTONS */
-        .btn-wii {
-            background: linear-gradient(to bottom, #3498db, #2980b9);
-            color: white; padding: 15px 50px; border-radius: 50px;
-            font-size: 1.2rem; font-weight: bold; text-transform: uppercase;
-            border: 2px solid rgba(255,255,255,0.3);
-            box-shadow: 0 5px 15px rgba(52, 152, 219, 0.4);
-            transition: transform 0.1s;
-        }
-        .btn-wii:active { transform: scale(0.95); }
+        .wii-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; width: 95%; max-width: 800px; padding: 20px; }
+        .btn-wii { background: var(--wii-blue); color: white; padding: 15px 40px; border-radius: 50px; font-weight: bold; border: 2px solid rgba(255,255,255,0.3); font-size: 1.2rem; }
     </style>
 </head>
 <body>
-
-    <div id="debug-console" onclick="this.style.display='none'"></div>
 
     <div id="layer-hw">
         <video id="video-source" playsinline style="display:none"></video>
@@ -148,84 +46,41 @@
     <div id="layer-os">
         
         <div id="screen-safety" class="screen" style="z-index: 100;">
-            <div class="bg-white p-8 rounded-[30px] shadow-2xl text-center max-w-sm mx-5 border-4 border-gray-100">
-                <div class="text-5xl mb-4">👋</div>
-                <h1 class="text-xl font-black text-gray-700 mb-2">ThIAguinho Wii</h1>
-                <p class="text-gray-400 mb-6 font-medium text-sm">Prepare-se para jogar.</p>
-                <button onclick="window.System.boot()" class="btn-wii animate-pulse">INICIAR</button>
-                <div id="boot-log" class="mt-4 text-[10px] text-blue-400 font-mono">Aguardando...</div>
+            <div class="bg-white p-8 rounded-3xl text-center shadow-xl border-4 border-gray-200">
+                <h1 class="text-2xl font-black text-gray-700 mb-2">ThIAguinho Wii</h1>
+                <p class="text-gray-400 mb-6 text-sm">Toque para iniciar o sistema.</p>
+                <button onclick="window.System.boot()" class="btn-wii">LIGAR</button>
+                <div id="boot-log" class="mt-4 text-xs text-blue-400 font-mono">Pronto.</div>
             </div>
-        </div>
-
-        <div id="screen-load" class="screen hidden" style="background: #111;">
-            <div class="w-16 h-16 border-4 border-gray-700 border-t-blue-500 rounded-full animate-spin"></div>
-            <p class="mt-6 text-gray-400 text-sm tracking-[0.3em] font-bold">CARREGANDO...</p>
         </div>
 
         <div id="screen-menu" class="screen hidden">
-            <div class="wii-grid" id="channel-grid">
-                </div>
-            
-            <div class="bottom-bar">
-                <div class="wii-circle-btn" onclick="alert('Opções do Sistema')">Wii</div>
-                <div class="flex flex-col items-center">
-                    <span id="clock" class="text-2xl font-black text-gray-600 tracking-tighter">12:00</span>
-                    <span class="text-xs text-gray-400 font-bold">ThIAguinho OS</span>
-                </div>
-                <div class="wii-circle-btn" onclick="location.reload()">↺</div>
-            </div>
+            <div class="wii-grid" id="channel-grid"></div>
+            <div class="absolute bottom-4 text-gray-400 font-bold">OTTO OS vFinal</div>
         </div>
 
         <div id="game-ui" class="screen hidden" style="background: transparent;">
-            <div class="absolute top-6 left-6 hud-panel">
-                <div class="flex flex-col">
-                    <span class="score-label">SCORE</span>
-                    <span id="hud-score" class="score-big">0</span>
-                </div>
-            </div>
-            
-            <button onclick="window.System.home()" class="absolute top-6 right-6 w-14 h-14 bg-white rounded-full flex items-center justify-center border-4 border-gray-200 shadow-lg text-blue-500 font-black text-xl hover:scale-110 transition-transform">
-                ⌂
-            </button>
-            
-            <div id="game-msg">GO!</div>
-
-            <div id="ui-wheel" class="absolute top-10 left-1/2 -translate-x-1/2 opacity-0 transition-opacity duration-500">
-                <div id="visual-wheel"></div> 
+            <button onclick="window.System.menu()" class="absolute top-4 right-4 w-12 h-12 bg-white rounded-full font-bold shadow-lg text-xl">X</button>
+            <div class="absolute top-4 left-4 bg-white/80 px-4 py-2 rounded-full font-bold text-xl" id="hud-score">0</div>
+            <div id="game-msg" class="text-white text-6xl font-black drop-shadow-lg scale-0 transition-transform">GO!</div>
+            <div id="ui-wheel" class="absolute top-20 left-1/2 -translate-x-1/2">
+                <div id="visual-wheel"></div>
             </div>
         </div>
 
-        <div id="screen-over" class="screen hidden" style="background: rgba(255,255,255,0.95); backdrop-filter: blur(10px);">
-            <h2 class="text-gray-400 font-bold tracking-widest mb-2">FIM DE JOGO</h2>
-            <h1 id="final-score" class="text-9xl font-black text-blue-500 mb-10 drop-shadow-sm">0</h1>
-            <div class="flex gap-4">
-                <button onclick="window.System.menu()" class="btn-wii bg-gray-500">MENU</button>
-                <button onclick="window.System.restart()" class="btn-wii">REINICIAR</button>
-            </div>
+        <div id="screen-over" class="screen hidden" style="background: rgba(255,255,255,0.95);">
+            <h1 class="text-6xl font-black text-gray-800 mb-4">FIM</h1>
+            <div id="final-score" class="text-8xl text-blue-500 font-black mb-8">0</div>
+            <button onclick="window.System.menu()" class="btn-wii">VOLTAR</button>
         </div>
     </div>
 
     <script src="js/core.js"></script>
+    
     <script src="js/game_run.js"></script>
     <script src="js/game_kart.js"></script>
     <script src="js/game_box.js"></script>
     <script src="js/game_tennis.js"></script>
 
-    <script>
-        // Global Error Handler
-        window.onerror = function(msg, url, line) {
-            const d = document.getElementById('debug-console');
-            d.style.display = 'block';
-            d.innerHTML += `ERRO: ${msg} (Linha ${line})<br>`;
-            return false;
-        };
-
-        // Clock Update
-        setInterval(() => {
-            const d = new Date();
-            document.getElementById('clock').innerText = 
-                `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-        }, 1000);
-    </script>
 </body>
 </html>
