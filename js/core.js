@@ -1,291 +1,235 @@
 /**
  * =============================================================================
- * THIAGUINHO SOLUÇÕES - CORE ENGINE v5.0 (MOBILE FIX)
+ * CORE ENGINE - VERSÃO BLINDADA (GITHUB PAGES FIX)
  * =============================================================================
- * Correção Crítica: Sistema de clique universal e tratamento de falha de áudio.
  */
 
 window.Sfx = {
     ctx: null,
-    
-    // Inicializa o áudio de forma segura
-    init() {
+    init: function() {
         try {
-            const AudioCtor = window.AudioContext || window.webkitAudioContext;
-            if (AudioCtor) this.ctx = new AudioCtor();
-        } catch(e) { console.warn("Audio desativado: Navegador não suporta."); }
+            window.AudioContext = window.AudioContext || window.webkitAudioContext;
+            this.ctx = new AudioContext();
+        } catch(e) { console.warn("Audio bloqueado pelo navegador"); }
     },
-
-    play(freq, type, duration, vol = 0.1) {
-        if (!this.ctx) return;
-        
-        // Tenta resumir o áudio se estiver suspenso (comum no Chrome Android)
-        if (this.ctx.state === 'suspended') {
-            this.ctx.resume().catch(() => {});
-        }
-
+    play: function(f, t, d) {
+        // Se o audio não existir ou der erro, IGNORA e segue o jogo.
+        if(!this.ctx) return; 
         try {
-            const osc = this.ctx.createOscillator();
-            const gain = this.ctx.createGain();
-            
-            osc.type = type;
-            osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
-            
-            gain.gain.setValueAtTime(vol, this.ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
-
-            osc.connect(gain);
-            gain.connect(this.ctx.destination);
-            osc.start();
-            osc.stop(this.ctx.currentTime + duration);
-        } catch(e) { 
-            // Silêncio: Se o áudio falhar, não trava o jogo
-        }
+            if(this.ctx.state === 'suspended') this.ctx.resume().catch(()=>{});
+            const o = this.ctx.createOscillator();
+            const g = this.ctx.createGain();
+            o.type=t; o.frequency.value=f;
+            g.gain.value=0.1; 
+            g.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime+d);
+            o.connect(g); g.connect(this.ctx.destination);
+            o.start(); o.stop(this.ctx.currentTime+d);
+        } catch(e) {}
     },
-
-    // Sons simplificados para garantir performance
-    boot() { this.play(600, 'sine', 0.2); },
-    click() { this.play(1200, 'sine', 0.1); },
-    back() { this.play(300, 'triangle', 0.1); },
-    jump() { this.play(150, 'square', 0.2); },
-    coin() { this.play(1000, 'square', 0.1); },
-    crash() { this.play(100, 'sawtooth', 0.5); }
+    // Atalhos seguros
+    click: function(){ this.play(1200,'sine',0.1); },
+    crash: function(){ this.play(100,'sawtooth',0.5); },
+    boot: function(){ this.play(600,'sine',0.3); }
 };
 
 window.Gfx = {
     shakePower: 0,
-    map(kp, w, h) { return { x: w - (kp.x / 640 * w), y: kp.y / 480 * h, score: kp.score }; },
-    shake(amount) { this.shakePower = amount; },
-    updateShake(ctx) {
-        if (this.shakePower > 0) {
-            ctx.translate((Math.random() - 0.5) * this.shakePower, (Math.random() - 0.5) * this.shakePower);
+    map: function(kp, w, h) { return { x: w-(kp.x/640*w), y: kp.y/480*h, score: kp.score }; },
+    shake: function(v) { this.shakePower = v; },
+    updateShake: function(ctx) {
+        if(this.shakePower > 0) {
+            ctx.translate((Math.random()-0.5)*this.shakePower, (Math.random()-0.5)*this.shakePower);
             this.shakePower *= 0.9;
         }
     },
-    drawSkeleton(ctx, pose, w, h, color='#0ff') { /* Skeleton logic opcional */ }
+    drawSkeleton: function(ctx, pose, w, h) { /* Lógica visual opcional */ }
 };
 
 window.System = {
     video: null, canvas: null, ctx: null, detector: null,
     activeGame: null, loopId: null, games: {},
 
-    registerGame(id, meta, logic) {
-        this.games[id] = { meta, logic };
-        // Atualiza o menu se ele já existir
-        if (document.getElementById('channel-grid')) this.renderMenu();
+    // 1. REGISTRO DE JOGOS (Agora à prova de falhas)
+    registerGame: function(id, meta, logic) {
+        console.log("Jogo carregado: " + id);
+        this.games[id] = { meta: meta, logic: logic };
     },
 
-    async boot() {
+    // 2. INICIALIZAÇÃO DO HARDWARE
+    boot: async function() {
         const log = document.getElementById('boot-log');
-        if(log) log.innerText = "INICIANDO...";
-        
-        // Tenta iniciar áudio no clique do usuário
+        log.innerText = "Iniciando Audio...";
         window.Sfx.init();
-        window.Sfx.boot();
 
         try {
-            // Câmera
+            log.innerText = "Pedindo Câmera...";
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'user', width: { ideal: 640 } }, 
+                video: { facingMode: 'user', width: {ideal: 640} }, 
                 audio: false 
             });
+            
             this.video = document.getElementById('video-source');
             this.video.srcObject = stream;
             document.getElementById('webcam').srcObject = stream;
-            
             await new Promise(r => this.video.onloadedmetadata = r);
-            this.video.play(); 
-            document.getElementById('webcam').play();
+            this.video.play(); document.getElementById('webcam').play();
 
-            // IA
+            log.innerText = "Carregando IA...";
             await tf.setBackend('webgl');
             this.detector = await poseDetection.createDetector(
                 poseDetection.SupportedModels.MoveNet,
                 { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
             );
 
-            // Canvas
+            // Prepara Canvas
             this.canvas = document.getElementById('game-canvas');
             this.ctx = this.canvas.getContext('2d', { alpha: false });
             this.resize();
             window.addEventListener('resize', () => this.resize());
 
-            // Esconde tela de segurança e abre menu
+            // Tudo pronto: Abre o menu
             document.getElementById('screen-safety').classList.add('hidden');
             this.menu();
+            window.Sfx.boot();
 
         } catch (e) {
-            alert("Erro na Câmera: " + e.message + "\nVerifique permissões do navegador.");
+            alert("ERRO FATAL: " + e.message + "\nVerifique permissões ou use HTTPS.");
         }
     },
 
-    renderMenu() {
+    // 3. RENDERIZAÇÃO DO MENU
+    menu: function() {
+        this.stopGame();
+        
+        // Troca telas
+        document.getElementById('screen-menu').classList.remove('hidden');
+        document.getElementById('game-ui').classList.add('hidden');
+        document.getElementById('screen-over').classList.add('hidden');
+
         const grid = document.getElementById('channel-grid');
-        if (!grid) return;
-        
         grid.innerHTML = '';
+
         const keys = Object.keys(this.games);
-        
+        if(keys.length === 0) {
+            grid.innerHTML = "<p style='color:red'>Carregando jogos...</p>";
+            // Tenta de novo em 1s caso os scripts estejam lentos
+            setTimeout(() => this.menu(), 1000);
+            return;
+        }
+
         keys.forEach(k => {
             const g = this.games[k];
             const div = document.createElement('div');
             div.className = 'channel';
-            
-            // CORREÇÃO: Usa onclick padrão para compatibilidade máxima
+            // Usa função anônima para evitar execução imediata
             div.onclick = function() { window.System.launch(k); };
-            
             div.innerHTML = `
-                <div class="channel-icon" style="pointer-events:none">${g.meta.icon}</div>
-                <div class="channel-title" style="pointer-events:none">${g.meta.name}</div>
+                <div class="channel-icon">${g.meta.icon}</div>
+                <div class="channel-title">${g.meta.name}</div>
             `;
             grid.appendChild(div);
         });
-
-        // Preenche vazios
-        for(let i=keys.length; i<12; i++) {
-            grid.innerHTML += `<div class="channel" style="opacity:0.3; border:2px dashed #ccc"></div>`;
-        }
     },
 
-    menu() {
-        this.stopGame();
-        document.getElementById('screen-menu').classList.remove('hidden');
-        document.getElementById('game-ui').classList.add('hidden');
-        document.getElementById('screen-over').classList.add('hidden');
-        // Garante que o menu está clicável
-        document.getElementById('screen-menu').style.zIndex = "50";
-        this.renderMenu();
-    },
-
-    launch(id) {
+    // 4. LANÇAR JOGO (Com proteção de erro)
+    launch: function(id) {
         try {
-            window.Sfx.click();
             const g = this.games[id];
-            
-            if (!g) {
-                alert("Erro: Jogo não encontrado na memória.");
-                return;
-            }
+            if(!g) throw new Error("Jogo não encontrado");
 
+            window.Sfx.click();
             this.activeGame = g;
-            
-            // TROCA VISUAL FORÇADA (Z-INDEX)
-            const menuScreen = document.getElementById('screen-menu');
-            const gameScreen = document.getElementById('game-ui');
-            const webCam = document.getElementById('webcam');
-            const wheel = document.getElementById('ui-wheel');
 
-            menuScreen.classList.add('hidden');
-            menuScreen.style.zIndex = "-1"; // Manda menu para trás
+            // Interface
+            document.getElementById('screen-menu').classList.add('hidden');
+            document.getElementById('game-ui').classList.remove('hidden');
             
-            gameScreen.classList.remove('hidden');
-            gameScreen.style.zIndex = "100"; // Traz jogo para frente
-            
-            // Configurações do jogo
-            if(webCam) webCam.style.opacity = g.meta.camOpacity || 0.2;
+            // Configs Específicas
+            const cam = document.getElementById('webcam');
+            const wheel = document.getElementById('ui-wheel');
+            if(cam) cam.style.opacity = g.meta.camOpacity || 0.2;
             if(wheel) wheel.style.opacity = g.meta.showWheel ? 1 : 0;
 
             // Inicia Lógica
-            g.logic.init();
+            if(g.logic.init) g.logic.init();
             
             // Inicia Loop
-            if (!this.loopId) this.loop();
+            if(!this.loopId) this.loop();
 
-        } catch (e) {
+        } catch(e) {
             console.error(e);
-            alert("Ocorreu um erro ao abrir o jogo: " + e.message);
+            alert("Erro ao abrir jogo: " + e.message);
             this.menu();
         }
     },
 
-    async loop() {
-        if (!this.activeGame) {
-            this.loopId = null;
-            return;
-        }
+    // 5. GAME LOOP (Protegido contra crash)
+    loop: async function() {
+        if(!window.System.activeGame) return;
 
         try {
-            // Detecção de Pose
+            // IA (Pode falhar se a câmera piscar, então try/catch)
             let pose = null;
-            if (this.detector && this.video.readyState === 4) {
+            if(window.System.detector) {
                 try {
-                    const poses = await this.detector.estimatePoses(this.video, { flipHorizontal: false });
-                    if (poses.length > 0) pose = poses[0];
-                } catch(err) { /* Ignora frames ruins da câmera */ }
+                    const poses = await window.System.detector.estimatePoses(window.System.video, {flipHorizontal: false});
+                    if(poses.length > 0) pose = poses[0];
+                } catch(err) {}
             }
 
-            // Renderização do Jogo
-            const w = this.canvas.width; 
-            const h = this.canvas.height;
+            const ctx = window.System.ctx;
+            const w = window.System.canvas.width;
+            const h = window.System.canvas.height;
+
+            ctx.clearRect(0, 0, w, h);
+            ctx.save();
+            window.Gfx.updateShake(ctx);
             
-            this.ctx.clearRect(0, 0, w, h);
-            this.ctx.save();
-            window.Gfx.updateShake(this.ctx);
-            
-            const score = this.activeGame.logic.update(this.ctx, w, h, pose);
-            this.ctx.restore();
+            // Executa o jogo
+            const score = window.System.activeGame.logic.update(ctx, w, h, pose);
+            ctx.restore();
 
-            // Atualiza Pontuação
-            const scoreEl = document.getElementById('hud-score');
-            if(scoreEl) scoreEl.innerText = Math.floor(score);
+            // Atualiza Score HUD
+            const hud = document.getElementById('hud-score');
+            if(hud) hud.innerText = Math.floor(score);
 
-            this.loopId = requestAnimationFrame(() => this.loop());
+            window.System.loopId = requestAnimationFrame(window.System.loop);
 
-        } catch (e) {
-            console.error("Game Loop Crash:", e);
-            // Se der erro grave no loop, para tudo e volta pro menu
-            this.stopGame();
-            alert("O jogo travou. Voltando ao menu.");
-            this.menu();
+        } catch(e) {
+            console.error("Crash no Loop:", e);
+            window.System.stopGame();
+            alert("Ocorreu um erro durante o jogo.");
+            window.System.menu();
         }
     },
 
-    stopGame() {
-        if (this.loopId) {
-            cancelAnimationFrame(this.loopId);
-            this.loopId = null;
-        }
+    stopGame: function() {
+        if(this.loopId) cancelAnimationFrame(this.loopId);
+        this.loopId = null;
         this.activeGame = null;
     },
 
-    home() {
-        window.Sfx.back();
-        this.menu();
-    },
-
-    gameOver(score) {
-        this.stopGame();
-        window.Sfx.crash();
-        document.getElementById('final-score').innerText = Math.floor(score);
-        document.getElementById('game-ui').classList.add('hidden');
-        document.getElementById('screen-over').classList.remove('hidden');
-        document.getElementById('screen-over').style.zIndex = "200"; // Game Over acima de tudo
-    },
-    
-    restart() {
-        if(this.activeGame) {
-             document.getElementById('screen-over').classList.add('hidden');
-             document.getElementById('game-ui').classList.remove('hidden');
-             this.activeGame.logic.init();
-             this.loop();
-        } else {
-            this.menu();
-        }
-    },
-
-    msg(txt) {
-        const el = document.getElementById('game-msg');
-        if (el) {
-            el.innerText = txt;
-            el.classList.add('pop');
-            setTimeout(() => el.classList.remove('pop'), 1500);
-        }
-    },
-
-    resize() {
-        if (this.canvas) {
+    resize: function() {
+        if(this.canvas) {
             this.canvas.width = window.innerWidth;
             this.canvas.height = window.innerHeight;
         }
+    },
+
+    msg: function(txt) {
+        const el = document.getElementById('game-msg');
+        if(el) {
+            el.innerText = txt;
+            el.style.transform = "scale(1)";
+            setTimeout(() => el.style.transform = "scale(0)", 1500);
+        }
+    },
+    
+    gameOver: function(s) {
+        this.stopGame();
+        window.Sfx.crash();
+        document.getElementById('final-score').innerText = Math.floor(s);
+        document.getElementById('game-ui').classList.add('hidden');
+        document.getElementById('screen-over').classList.remove('hidden');
     }
 };
