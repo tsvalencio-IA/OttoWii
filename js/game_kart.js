@@ -1,210 +1,206 @@
 /**
  * =============================================================================
- * OTTO KART - NINTENDO RACING ENGINE
+ * OTTO KART - RACING ENGINE
  * =============================================================================
- * Simulador de corrida com física de inércia, sistema de drift e 
- * adversários com IA.
+ * Simulação Pseudo-3D (Mode 7 style).
  */
 
 (function() {
-    const CONFIG = {
-        MAX_SPEED: 800,
-        ACCEL: 200,
-        FRICTION: 0.98,
-        STEER_SPEED: 5,
-        TRACK_LENGTH: 20000,
-        LANE_WIDTH: 1200,
-        FOCAL_LENGTH: 300
+    const KART = {
+        MAX_SPEED: 12000,
+        ACCEL: 3000,
+        DECEL: 2000,
+        OFF_ROAD_DECEL: 6000,
+        TURN_SPEED: 2000,
+        ROAD_WIDTH: 2000,
+        SEGMENT_LENGTH: 200
     };
 
     const Logic = {
-        score: 0,
+        pos: 0,
         speed: 0,
-        posZ: 0,
-        posX: 0,
-        steer: 0,
-        lap: 1,
-        state: 'warmup', // warmup, race, finish
-        
-        // Entities
-        opponents: [],
-        props: [],
+        playerX: 0, // -1 a 1 (normalizado pela largura da pista)
+        trackLength: 0,
+        segments: [],
         
         // Input
-        wheelAngle: 0,
-
+        steerAngle: 0, // Calculado pelas mãos
+        
         init() {
-            this.score = 0;
+            this.pos = 0;
             this.speed = 0;
-            this.posZ = 0;
-            this.posX = 0;
-            this.steer = 0;
-            this.lap = 1;
-            this.state = 'warmup';
-            this.opponents = [];
-            this.props = [];
+            this.playerX = 0;
+            this.generateTrack();
+        },
+
+        generateTrack() {
+            this.segments = [];
+            const addSegment = (curve) => {
+                this.segments.push({
+                    curve: curve,
+                    y: 0, // Poderia adicionar colinas aqui
+                    clip: 0
+                });
+            };
+
+            // Layout da pista
+            for(let i=0; i<50; i++) addSegment(0); // Reta
+            for(let i=0; i<40; i++) addSegment(2); // Direita suave
+            for(let i=0; i<20; i++) addSegment(0);
+            for(let i=0; i<40; i++) addSegment(-3); // Esquerda forte
+            for(let i=0; i<100; i++) addSegment(0);
             
-            // Spawn Opponents
-            for(let i=0; i<5; i++) {
-                this.opponents.push({
-                    id: i,
-                    x: (Math.random() - 0.5) * 2000,
-                    z: 500 + i * 1000,
-                    speed: 600 + Math.random() * 150,
-                    color: ['#f00', '#0f0', '#00f', '#ff0', '#f0f'][i]
-                });
-            }
-
-            // Spawn Props (Trees, Pipes)
-            for(let z=1000; z<CONFIG.TRACK_LENGTH; z+=400) {
-                this.props.push({
-                    x: (Math.random() > 0.5 ? 1 : -1) * 2000,
-                    z: z,
-                    type: Math.random() > 0.5 ? 'tree' : 'pipe'
-                });
-            }
-
-            window.System.msg("PREPARAR...");
-            setTimeout(() => { 
-                this.state = 'race'; 
-                window.System.msg("GO!"); 
-            }, 3000);
+            this.trackLength = this.segments.length * KART.SEGMENT_LENGTH;
         },
 
         update(ctx, w, h, pose, dt) {
-            const cx = w / 2;
-            const cy = h * 0.4;
-
-            // 1. INPUT (Steering Wheel Logic)
-            if (pose && this.state === 'race') {
+            // 1. INPUT (Volante Virtual)
+            if (pose) {
                 const lw = pose.keypoints.find(k => k.name === 'left_wrist');
                 const rw = pose.keypoints.find(k => k.name === 'right_wrist');
-
-                if (lw && rw && lw.score > 0.4 && rw.score > 0.4) {
-                    const p1 = window.Gfx.map(lw, w, h);
-                    const p2 = window.Gfx.map(rw, w, h);
-                    
-                    const dx = p2.x - p1.x;
-                    const dy = p2.y - p1.y;
-                    this.wheelAngle = Math.atan2(dy, dx);
-                    
-                    // Physics Application
-                    this.steer = this.wheelAngle * CONFIG.STEER_SPEED;
-                    this.speed = Math.min(CONFIG.MAX_SPEED, this.speed + CONFIG.ACCEL * dt);
-                } else {
-                    this.speed *= CONFIG.FRICTION;
-                }
-            }
-
-            if (this.state === 'race') {
-                this.posZ += this.speed * dt;
-                this.posX += this.steer * (this.speed / CONFIG.MAX_SPEED) * 10;
                 
-                // Boundary
-                if (Math.abs(this.posX) > 2500) {
-                    this.speed *= 0.95;
-                    window.Gfx.shake(5);
+                if (lw && rw && lw.score > 0.3 && rw.score > 0.3) {
+                    const diffY = rw.y - lw.y;
+                    const diffX = rw.x - lw.x;
+                    this.steerAngle = Math.atan2(diffY, diffX); // Ângulo em radianos
+                    
+                    // Acelera se segurar o volante estável
+                    this.speed += KART.ACCEL * dt;
+                } else {
+                    this.speed -= KART.DECEL * dt;
                 }
-
-                // Lap Logic
-                if (this.posZ > CONFIG.TRACK_LENGTH) {
-                    this.posZ = 0;
-                    this.lap++;
-                    window.System.msg("VOLTA " + this.lap);
-                    if (this.lap > 3) {
-                        this.state = 'finish';
-                        window.System.gameOver(this.score);
-                    }
-                }
-
-                this.score = this.posZ / 10;
-
-                // Update Opponents
-                this.opponents.forEach(o => {
-                    o.z += o.speed * dt;
-                    if (o.z > CONFIG.TRACK_LENGTH) o.z = 0;
-                });
+            } else {
+                this.speed -= KART.DECEL * dt;
             }
 
-            // 2. RENDERING
-            this.drawWorld(ctx, w, h, cy);
-            
-            // Z-Sorting for all objects
-            const renderQueue = [];
-            this.props.forEach(p => renderQueue.push({ type: 'prop', obj: p, z: p.z - (this.posZ % CONFIG.TRACK_LENGTH) }));
-            this.opponents.forEach(o => renderQueue.push({ type: 'opp', obj: o, z: o.z - (this.posZ % CONFIG.TRACK_LENGTH) }));
-            
-            renderQueue
-                .filter(item => item.z > 0 && item.z < 5000)
-                .sort((a, b) => b.z - a.z)
-                .forEach(item => {
-                    this.drawObject(ctx, w, h, cy, item);
-                });
+            // Clampar velocidade e aplicar atrito off-road
+            if (Math.abs(this.playerX) > 1.2) this.speed -= KART.OFF_ROAD_DECEL * dt;
+            this.speed = MathUtils.clamp(this.speed, 0, KART.MAX_SPEED);
 
-            this.drawUI(ctx, w, h);
+            // Mover Player
+            this.pos += this.speed * dt;
+            while (this.pos >= this.trackLength) this.pos -= this.trackLength;
+            while (this.pos < 0) this.pos += this.trackLength;
 
-            return this.score;
+            // Curva e Física X
+            // Pegar segmento atual para saber a curva
+            const currentSegIndex = Math.floor(this.pos / KART.SEGMENT_LENGTH);
+            const currentSeg = this.segments[currentSegIndex % this.segments.length];
+            
+            // Steering input (inverso, porque inclinar para direita (mão dir baixa) = ângulo positivo)
+            // Ajuste fino para sensação de direção
+            const steerInput = MathUtils.clamp(this.steerAngle * 2, -1, 1); 
+            
+            // Física centrífuga: Curva empurra player para fora, volante empurra para dentro
+            const centrifugal = (currentSeg.curve * this.speed / KART.MAX_SPEED) * dt;
+            this.playerX -= centrifugal * 2; 
+            this.playerX -= steerInput * (this.speed / KART.MAX_SPEED) * dt * 2;
+
+            this.playerX = MathUtils.clamp(this.playerX, -2, 2);
+
+            // RENDER
+            this.renderTrack(ctx, w, h);
+            this.renderPlayer(ctx, w, h, steerInput);
+            
+            // Draw Wheel Guide
+            this.drawWheelGuide(ctx, w, h);
+
+            return Math.floor(this.speed / 100);
         },
 
-        drawWorld(ctx, w, h, cy) {
-            // Sky & Grass
-            ctx.fillStyle = '#87CEEB'; ctx.fillRect(0, 0, w, cy);
-            ctx.fillStyle = '#32cd32'; ctx.fillRect(0, cy, w, h - cy);
+        renderTrack(ctx, w, h) {
+            ctx.fillStyle = '#72D7EE'; // Sky
+            ctx.fillRect(0,0,w,h/2);
+            ctx.fillStyle = '#333'; // Ground backup
+            ctx.fillRect(0,h/2,w,h/2);
 
-            // Road Perspective
-            ctx.fillStyle = '#555';
+            const startPos = this.pos;
+            const startIdx = Math.floor(this.pos / KART.SEGMENT_LENGTH);
+            let x = 0, dx = 0;
+            let maxY = h;
+
+            // Projection variables
+            const camH = 1000;
+            const camD = 1 / Math.tan(100 * Math.PI / 180); // FOV
+
+            for(let n = startIdx; n < startIdx + 50; n++) {
+                const seg = this.segments[n % this.segments.length];
+                const loop = Math.floor(n / this.segments.length);
+                const segZ = (n * KART.SEGMENT_LENGTH) - startPos; // Z relativo à câmera
+                
+                // Project
+                const scale = camD / segZ;
+                const screenY = (1 + scale * camH) * (h/2); // Y centralizado
+                
+                // Curve X accumulation
+                x += dx;
+                dx += seg.curve;
+                const screenX = w/2 + (scale * (x - this.playerX * KART.ROAD_WIDTH) * w/2);
+                
+                const segmentWidth = KART.ROAD_WIDTH * scale * w/2;
+
+                if (screenY >= maxY || segZ <= 10) continue;
+                
+                // Draw Segment
+                const color = (n % 2) ? '#fff' : '#c0392b'; // Rumble strip
+                const roadColor = (Math.floor(n/3)%2) ? '#666' : '#606060';
+
+                ctx.fillStyle = '#2c3e50'; // Grass
+                ctx.fillRect(0, screenY, w, maxY - screenY);
+
+                ctx.fillStyle = roadColor; // Road
+                const H = maxY - screenY;
+                ctx.beginPath();
+                ctx.moveTo(screenX - segmentWidth, screenY);
+                ctx.lineTo(screenX + segmentWidth, screenY);
+                ctx.lineTo(screenX + segmentWidth * 1.05, screenY + H); // Simplificado
+                ctx.lineTo(screenX - segmentWidth * 1.05, screenY + H);
+                ctx.fill();
+
+                maxY = screenY;
+            }
+        },
+
+        renderPlayer(ctx, w, h, steer) {
+            const cx = w/2;
+            const cy = h - 100;
+            
+            ctx.save();
+            ctx.translate(cx, cy);
+            // Tilt do kart baseado na curva
+            ctx.rotate(steer * 0.5); 
+            
+            // Kart simples
+            ctx.fillStyle = '#e74c3c';
+            ctx.fillRect(-40, -40, 80, 40);
+            ctx.fillStyle = '#333';
+            ctx.fillRect(-45, -20, 10, 20); // Pneu
+            ctx.fillRect(35, -20, 10, 20); // Pneu
+
+            // Driver
+            ctx.fillStyle = '#f1c40f';
             ctx.beginPath();
-            ctx.moveTo(w/2, cy);
-            ctx.lineTo(w * 1.5 - this.posX * 0.1, h);
-            ctx.lineTo(-w * 0.5 - this.posX * 0.1, h);
+            ctx.arc(0, -50, 20, 0, Math.PI*2);
             ctx.fill();
 
-            // Road Lines
-            ctx.strokeStyle = '#fff';
-            ctx.setLineDash([20, 20]);
-            ctx.beginPath();
-            ctx.moveTo(w/2, cy);
-            ctx.lineTo(w/2 - this.posX * 0.1, h);
-            ctx.stroke();
-            ctx.setLineDash([]);
-        },
-
-        drawObject(ctx, w, h, cy, item) {
-            const scale = CONFIG.FOCAL_LENGTH / (CONFIG.FOCAL_LENGTH + item.z);
-            const x = w/2 + (item.obj.x - this.posX) * scale;
-            const y = cy + (h - cy) * scale;
-            const size = 200 * scale;
-
-            ctx.save();
-            if (item.type === 'prop') {
-                ctx.fillStyle = item.obj.type === 'tree' ? '#2d5a27' : '#00aa00';
-                ctx.fillRect(x - size/2, y - size, size, size);
-            } else {
-                ctx.fillStyle = item.obj.color;
-                ctx.fillRect(x - size, y - size/2, size * 2, size/2);
-                ctx.fillStyle = '#000';
-                ctx.fillRect(x - size, y, size/2, size/4);
-                ctx.fillRect(x + size/2, y, size/2, size/4);
-            }
             ctx.restore();
         },
-
-        drawUI(ctx, w, h) {
-            // Draw Steering Wheel Overlay
-            const wheel = document.getElementById('visual-wheel');
-            if (wheel) {
-                wheel.style.transform = `rotate(${this.wheelAngle}rad)`;
-            }
+        
+        drawWheelGuide(ctx, w, h) {
+             ctx.save();
+             ctx.translate(w - 100, 100);
+             ctx.rotate(this.steerAngle);
+             ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+             ctx.lineWidth = 5;
+             ctx.beginPath();
+             ctx.arc(0,0,40,0,Math.PI*2);
+             ctx.stroke();
+             ctx.beginPath();
+             ctx.moveTo(-40,0); ctx.lineTo(40,0);
+             ctx.stroke();
+             ctx.restore();
         }
     };
 
-    // Registro Robusto
-    function tryRegister() {
-        if (window.System && typeof window.System.registerGame === 'function') {
-            window.System.registerGame('kart', 'Otto Kart', '🏎️', Logic, { showWheel: true });
-        } else {
-            setTimeout(tryRegister, 200);
-        }
-    }
-    tryRegister();
-})();
+    window.System.registerGame('kart', { name: 'Otto Kart', icon: '🏎️' }, Logic);
+})()
