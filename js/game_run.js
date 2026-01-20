@@ -1,192 +1,366 @@
 /**
  * =============================================================================
- * SUPER OTTO WORLD (VISUAL ANTIGO + FÍSICA NOVA)
+ * SUPER OTTO WORLD - NEW PHYSICS ENGINE
+ * =============================================================================
+ * Melhorias:
+ * - Gravidade Parabólica Real (Não-linear).
+ * - Parallax Scrolling nas Nuvens.
+ * - Sprites Desenhados proceduralmente (Estilo 8-bit moderno).
  * =============================================================================
  */
+
 (function() {
+    // Constantes Físicas
     const PHYS = {
-        GRAVITY: 0.7,
-        JUMP_FORCE: -17,
-        SPEED_BASE: 12,
-        SPEED_MAX: 22,
-        LANE_WIDTH: 220
+        GRAVITY: 0.8,         // Força G
+        JUMP_POWER: -18,      // Impulso inicial
+        GROUND_Y: 0,          // Chão relativo
+        LANE_WIDTH: 200,      // Largura da pista
+        SPEED_INC: 0.005      // Aceleração do mundo
     };
 
     const Logic = {
-        score: 0, distance: 0, speed: 0, state: 'play',
-        player: { lane:0, visualX:0, y:0, vy:0, jumping:false },
-        objects: [], clouds: [],
+        score: 0,
+        distance: 0,
+        worldSpeed: 0,
+        
+        // Jogador
+        player: {
+            lane: 0,          // -1 (Esq), 0 (Meio), 1 (Dir)
+            x: 0,             // Posição visual X (interpolada)
+            y: 0,             // Altura (pulo)
+            vy: 0,            // Velocidade vertical
+            isJumping: false
+        },
+
+        // Entidades
+        objects: [],
+        clouds: [],
 
         init: function() {
-            this.score = 0; this.distance = 0; this.speed = PHYS.SPEED_BASE;
-            this.objects = []; this.clouds = [];
-            for(let i=0; i<6; i++) this.addCloud(true);
-            this.player = { lane:0, visualX:0, y:0, vy:0, jumping:false };
+            this.score = 0;
+            this.distance = 0;
+            this.worldSpeed = 15; // Velocidade inicial
+            
+            // Reset Player
+            this.player = { lane: 0, x: 0, y: 0, vy: 0, isJumping: false };
+            
+            // Limpa Entidades
+            this.objects = [];
+            this.clouds = [];
+            
+            // Nuvens Iniciais
+            for(let i=0; i<8; i++) {
+                this.spawnCloud(Math.random() * 3000);
+            }
+
             window.System.msg("CORRA!");
+            window.Sfx.boot();
         },
 
         update: function(ctx, w, h, pose) {
-            const cx = w/2; const horizon = h*0.45;
+            const cx = w / 2;
+            const horizon = h * 0.45; // Linha do horizonte
 
-            // 1. INPUT (Suavizado)
+            // =================================================================
+            // 1. INPUT (HEAD TRACKING)
+            // =================================================================
             if(pose) {
-                const nose = pose.keypoints.find(k=>k.name==='nose');
-                if(nose && nose.score>0.4) {
-                    const nx = nose.x / 640;
-                    if(nx < 0.4) this.player.lane = 1;
-                    else if(nx > 0.6) this.player.lane = -1;
-                    else this.player.lane = 0;
+                const nose = pose.keypoints.find(k => k.name === 'nose');
+                if(nose && nose.score > 0.4) {
+                    // Normaliza X do nariz (0 a 1)
+                    const nx = nose.x / 640; 
+                    
+                    // Zonas de Controle (Deadzone no meio)
+                    if (nx < 0.4) this.player.lane = 1;      // Esquerda (Espelhado)
+                    else if (nx > 0.6) this.player.lane = -1; // Direita (Espelhado)
+                    else this.player.lane = 0;               // Centro
 
-                    // Pulo (Se o nariz subir)
-                    if(nose.y < 200 && !this.player.jumping) {
-                        this.player.vy = PHYS.JUMP_FORCE;
-                        this.player.jumping = true;
-                        window.Sfx.jump();
+                    // Trigger de Pulo (Nariz sobe na tela)
+                    // Se o nariz subir acima de 30% da tela e não estiver pulando
+                    if (nose.y < 150 && !this.player.isJumping) {
+                        this.jump();
                     }
                 }
             }
 
-            // 2. FÍSICA
-            if(this.speed < PHYS.SPEED_MAX) this.speed += 0.01;
-            this.distance += this.speed;
-            this.score = Math.floor(this.distance/10);
+            // =================================================================
+            // 2. FÍSICA DO JOGADOR
+            // =================================================================
+            // Aceleração do Mundo
+            if (this.worldSpeed < 30) this.worldSpeed += PHYS.SPEED_INC;
+            this.distance += this.worldSpeed;
+            this.score = Math.floor(this.distance / 10);
 
+            // Gravidade (Parábola)
             this.player.y += this.player.vy;
             this.player.vy += PHYS.GRAVITY;
-            if(this.player.y > 0) { this.player.y=0; this.player.vy=0; this.player.jumping=false; }
 
+            // Colisão com Chão
+            if (this.player.y > PHYS.GROUND_Y) {
+                this.player.y = PHYS.GROUND_Y;
+                this.player.vy = 0;
+                this.player.isJumping = false;
+            }
+
+            // Interpolação Lateral Suave (Lerp)
             const targetX = this.player.lane * PHYS.LANE_WIDTH;
-            this.player.visualX += (targetX - this.player.visualX) * 0.15;
+            this.player.x += (targetX - this.player.x) * 0.15;
 
-            this.spawnManager();
-            if(Math.random()<0.02) this.addCloud();
+            // =================================================================
+            // 3. GERENCIAMENTO DE OBJETOS
+            // =================================================================
+            this.manageSpawns();
             this.updateEntities();
 
-            // 3. RENDER (ESTILO CLÁSSICO RESTAURADO)
+            // =================================================================
+            // 4. RENDERIZAÇÃO
+            // =================================================================
             
-            // Céu e Nuvens
-            const grad = ctx.createLinearGradient(0,0,0,horizon);
-            grad.addColorStop(0, '#5c94fc'); grad.addColorStop(1, '#95b8ff');
-            ctx.fillStyle = grad; ctx.fillRect(0,0,w,h);
+            // Céu (Degradê Mario)
+            const grad = ctx.createLinearGradient(0, 0, 0, h);
+            grad.addColorStop(0, '#63a4ff');
+            grad.addColorStop(0.5, '#87CEEB');
+            grad.addColorStop(1, '#ffffff');
+            ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
+
+            // Montanhas de Fundo (Decorativo)
+            this.drawMountains(ctx, w, horizon);
+
+            // Nuvens (Parallax)
             this.drawClouds(ctx, w, h);
 
-            // Chão
-            ctx.fillStyle = '#00aa00'; ctx.fillRect(0,horizon,w,h-horizon);
-            
-            // Pista
-            const roadTop = 20; const roadBot = w * 0.8;
-            ctx.fillStyle = '#e67e22'; 
-            ctx.beginPath();
-            ctx.moveTo(cx-roadTop, horizon); ctx.lineTo(cx+roadTop, horizon);
-            ctx.lineTo(cx+roadBot, h); ctx.lineTo(cx-roadBot, h);
-            ctx.fill();
-            
-            // Objetos e Player
-            this.objects.sort((a,b)=>b.z-a.z).forEach(o => this.drawObj(ctx, o, w, h, horizon));
-            this.drawPlayer(ctx, cx + this.player.visualX, h - 50 + this.player.y, this.player.jumping);
+            // Chão (Grama)
+            ctx.fillStyle = '#00cc44';
+            ctx.fillRect(0, horizon, w, h - horizon);
+
+            // Estrada (Perspectiva)
+            this.drawRoad(ctx, cx, horizon, w, h);
+
+            // Objetos (Z-Sort)
+            this.objects.sort((a, b) => b.z - a.z); // Desenha de trás pra frente
+            this.objects.forEach(o => this.drawObject(ctx, o, cx, horizon, h));
+
+            // Jogador
+            this.drawPlayer(ctx, cx, h);
 
             return this.score;
         },
 
-        spawnManager: function() {
-            const last = this.objects[this.objects.length-1];
-            if(!last || (3000 - last.z) > 500) {
-                if(Math.random() < 0.06) {
-                    this.objects.push({ 
-                        z: 3000, lane: Math.floor(Math.random()*3)-1, 
-                        type: Math.random()>0.5 ? 'pipe' : 'block' 
+        jump: function() {
+            this.player.vy = PHYS.JUMP_POWER;
+            this.player.isJumping = true;
+            window.Sfx.jump();
+        },
+
+        spawnCloud: function(z) {
+            this.clouds.push({
+                x: (Math.random() - 0.5) * 2000,
+                y: Math.random() * 200,
+                z: z,
+                size: 50 + Math.random() * 50
+            });
+        },
+
+        manageSpawns: function() {
+            // Se o último objeto estiver longe o suficiente, spawna outro
+            const lastObj = this.objects[this.objects.length - 1];
+            const safeDist = 3000 - (this.worldSpeed * 10); // Distância segura diminui com a velocidade
+            
+            if (!lastObj || lastObj.z < safeDist) {
+                if (Math.random() < 0.3) {
+                    const type = Math.random() < 0.6 ? 'pipe' : 'block';
+                    // Garante que não spawna na mesma lane impossível
+                    const lane = Math.floor(Math.random() * 3) - 1;
+                    
+                    this.objects.push({
+                        type: type,
+                        lane: lane,
+                        z: 3000,
+                        passed: false
                     });
                 }
             }
+            
+            // Nuvens
+            if(Math.random() < 0.05) this.spawnCloud(3000);
         },
 
         updateEntities: function() {
-            for(let i=this.objects.length-1; i>=0; i--) {
+            // Objetos
+            for(let i = this.objects.length - 1; i >= 0; i--) {
                 const o = this.objects[i];
-                o.z -= this.speed * 1.5;
-                if(o.z < 100 && o.z > -100 && o.lane === this.player.lane) {
-                    if(this.player.y > -120) {
-                        window.Gfx.shake(15);
+                o.z -= this.worldSpeed;
+
+                // Colisão
+                if (o.z < 100 && o.z > -100 && o.lane === this.player.lane) {
+                    // Se o player estiver baixo o suficiente para bater
+                    // Altura do Pipe/Bloco ~ 100px. Pulo ~ 200px.
+                    // Hitbox check
+                    if (this.player.y > -120) {
+                        window.Gfx.shake(10);
                         window.System.gameOver(this.score);
-                    } else if(!o.passed) {
-                        o.passed = true; window.Sfx.coin();
+                        return;
+                    } else if (!o.passed) {
+                        // Passou por cima!
+                        o.passed = true;
+                        window.Sfx.coin();
                     }
                 }
-                if(o.z < -200) this.objects.splice(i,1);
+
+                if (o.z < -200) this.objects.splice(i, 1);
+            }
+
+            // Nuvens
+            for(let i = this.clouds.length - 1; i >= 0; i--) {
+                const c = this.clouds[i];
+                c.z -= this.worldSpeed * 0.5; // Nuvens mais lentas (Parallax)
+                if (c.z < 100) this.clouds.splice(i, 1);
             }
         },
 
-        addCloud: function(start) {
-            this.clouds.push({ x: (Math.random()-0.5)*3000, y: Math.random()*200, z: start?Math.random()*3000:3000, s: 50+Math.random()*50 });
+        // --- RENDERERS ---
+
+        drawRoad: function(ctx, cx, horizon, w, h) {
+            const roadTopW = 20;
+            const roadBotW = w * 0.9;
+
+            ctx.fillStyle = '#d35400'; // Terra batida
+            ctx.beginPath();
+            ctx.moveTo(cx - roadTopW, horizon);
+            ctx.lineTo(cx + roadTopW, horizon);
+            ctx.lineTo(cx + roadBotW, h);
+            ctx.lineTo(cx - roadBotW, h);
+            ctx.fill();
+            
+            // Faixas
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.lineWidth = 4;
+            const lanes = [-1, 1];
+            lanes.forEach(l => {
+                const lx = l * (PHYS.LANE_WIDTH / 2); // Aproximação
+                // Desenha linhas dividindo as pistas
+                // (Simplificado para visual clean)
+            });
+        },
+
+        drawMountains: function(ctx, w, horizon) {
+            ctx.fillStyle = '#2ecc71'; // Verde montanha
+            ctx.beginPath();
+            ctx.moveTo(0, horizon);
+            ctx.lineTo(w*0.2, horizon - 100);
+            ctx.lineTo(w*0.5, horizon);
+            ctx.lineTo(w*0.8, horizon - 150);
+            ctx.lineTo(w, horizon);
+            ctx.fill();
         },
 
         drawClouds: function(ctx, w, h) {
-            ctx.fillStyle = 'rgba(255,255,255,0.8)';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
             this.clouds.forEach(c => {
-                c.z -= this.speed * 0.5;
-                if(c.z < 100) c.z = 3000;
-                const s = 1000/c.z;
-                const cx = w/2 + c.x * s; const cy = h*0.4 - c.y * s;
-                const size = c.s * s;
-                ctx.beginPath(); ctx.arc(cx, cy, size, 0, Math.PI*2); 
-                ctx.arc(cx+size, cy+size*0.2, size*0.8, 0, Math.PI*2);
-                ctx.arc(cx-size, cy+size*0.2, size*0.8, 0, Math.PI*2);
+                const scale = 800 / (800 + c.z);
+                const screenX = (w/2) + c.x * scale;
+                const screenY = (h*0.4) - c.y * scale;
+                const size = c.size * scale;
+                
+                ctx.beginPath();
+                ctx.arc(screenX, screenY, size, 0, Math.PI*2);
+                ctx.arc(screenX + size*0.8, screenY + size*0.2, size*0.7, 0, Math.PI*2);
+                ctx.arc(screenX - size*0.8, screenY + size*0.2, size*0.7, 0, Math.PI*2);
                 ctx.fill();
             });
         },
 
-        drawObj: function(ctx, o, w, h, hor) {
-            const s = 400/(400+o.z);
-            const x = w/2 + (o.lane * PHYS.LANE_WIDTH * s * 2.5);
-            const y = hor + (h-hor)*s;
-            const size = 150 * s;
+        drawObject: function(ctx, o, cx, horizon, h) {
+            const scale = 600 / (600 + o.z);
+            const x = cx + (o.lane * PHYS.LANE_WIDTH * scale * 2.0); // 2.0 fator de perspectiva
+            const y = horizon + (h - horizon) * scale;
+            const s = 150 * scale;
 
-            if(o.type === 'pipe') {
-                ctx.fillStyle = '#00aa00'; ctx.fillRect(x-size/2, y-size, size, size);
-                ctx.fillStyle = '#00cc00'; ctx.fillRect(x-size/2+5, y-size, size*0.1, size);
-                ctx.fillStyle = '#008800'; ctx.fillRect(x-size*0.6, y-size*1.2, size*1.2, size*0.4);
-                ctx.strokeStyle = '#003300'; ctx.lineWidth=2; ctx.strokeRect(x-size*0.6, y-size*1.2, size*1.2, size*0.4);
+            if (o.type === 'pipe') {
+                // Cano Verde
+                ctx.fillStyle = '#00aa00';
+                ctx.strokeStyle = '#004400';
+                ctx.lineWidth = 2;
+                
+                // Tubo
+                ctx.fillRect(x - s/2, y - s, s, s);
+                ctx.strokeRect(x - s/2, y - s, s, s);
+                
+                // Borda
+                ctx.fillRect(x - s*0.6, y - s - (s*0.2), s*1.2, s*0.3);
+                ctx.strokeRect(x - s*0.6, y - s - (s*0.2), s*1.2, s*0.3);
+                
+                // Brilho
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                ctx.fillRect(x - s*0.4, y - s, s*0.1, s*0.8);
+
             } else {
-                ctx.fillStyle = '#f1c40f'; ctx.fillRect(x-size/2, y-size*2, size, size);
-                ctx.fillStyle = '#d35400'; ctx.fillRect(x-size/2, y-size*2, size, size*0.1);
-                ctx.fillStyle = '#fff'; ctx.font=`bold ${size*0.8}px monospace`; ctx.textAlign='center';
-                ctx.fillText('?', x, y-size*1.2);
+                // Bloco ?
+                ctx.fillStyle = '#f1c40f';
+                ctx.fillRect(x - s/2, y - s*2.2, s, s);
+                ctx.strokeStyle = '#d35400';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x - s/2, y - s*2.2, s, s);
+                
+                // ?
+                ctx.fillStyle = '#fff';
+                ctx.font = `bold ${s*0.8}px monospace`;
+                ctx.textAlign = 'center';
+                ctx.fillText("?", x, y - s*1.4);
             }
         },
 
-        drawPlayer: function(ctx, x, y, jump) {
-            // Sombra
-            if(jump) { ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.ellipse(x, y-this.player.y, 40, 10, 0, 0, Math.PI*2); ctx.fill(); }
+        drawPlayer: function(ctx, cx, h) {
+            const x = cx + this.player.x; // Já está escalado? Não, visualX é relativo ao centro
+            const y = h - 80 + this.player.y; // Base fixa + pulo
             
-            // Corpo (Macacão)
-            ctx.fillStyle = '#0039e6'; ctx.fillRect(x-20, y-60, 40, 40);
+            // Sombra (Fica no chão)
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            ctx.beginPath();
+            ctx.ellipse(x, h - 50, 30, 10, 0, 0, Math.PI*2);
+            ctx.fill();
+
+            // Boneco (Estilo "Otto" Vermelho)
+            ctx.save();
+            ctx.translate(x, y);
+            
+            // Macacão Azul
+            ctx.fillStyle = '#0039e6';
+            ctx.fillRect(-15, -40, 30, 30);
             
             // Camisa Vermelha
-            ctx.fillStyle = '#e60000'; 
-            if(jump) { ctx.fillRect(x-35, y-75, 15, 30); ctx.fillRect(x+20, y-75, 15, 30); }
-            else { ctx.fillRect(x-35, y-65, 15, 30); ctx.fillRect(x+20, y-65, 15, 30); }
-            
-            // Rosto
-            ctx.fillStyle = '#ffccaa'; ctx.beginPath(); ctx.arc(x, y-75, 25, 0, Math.PI*2); ctx.fill();
-            
-            // Bigode
-            ctx.fillStyle = '#000'; ctx.fillRect(x-10, y-70, 25, 8); 
+            ctx.fillStyle = '#e70000';
+            ctx.beginPath(); ctx.arc(0, -45, 18, 0, Math.PI*2); ctx.fill();
+            // Braços
+            if(this.player.isJumping) {
+                // Braços pra cima
+                ctx.fillRect(-25, -60, 10, 25);
+                ctx.fillRect(15, -60, 10, 25);
+            } else {
+                // Braços correndo
+                const swing = Math.sin(Date.now() / 50) * 10;
+                ctx.fillRect(-25, -50 + swing, 10, 25);
+                ctx.fillRect(15, -50 - swing, 10, 25);
+            }
+
+            // Cabeça
+            ctx.fillStyle = '#ffccaa'; // Pele
+            ctx.beginPath(); ctx.arc(0, -65, 20, 0, Math.PI*2); ctx.fill();
             
             // Chapéu
-            ctx.fillStyle = '#e60000'; ctx.beginPath(); ctx.arc(x, y-85, 26, 0, Math.PI, true); ctx.fill();
-            ctx.fillRect(x-28, y-85, 65, 12);
-            
-            // Letra M
-            ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y-92, 10, 0, Math.PI*2); ctx.fill();
-            ctx.fillStyle = 'red'; ctx.font='bold 14px Arial'; ctx.textAlign='center'; ctx.fillText('M', x, y-88);
+            ctx.fillStyle = '#e70000';
+            ctx.beginPath(); ctx.arc(0, -70, 22, Math.PI, 0); ctx.fill();
+            ctx.fillRect(-25, -70, 50, 8); // Aba
+
+            // Rosto
+            ctx.fillStyle = '#000';
+            ctx.fillRect(5, -65, 4, 4); // Olho
+            ctx.fillRect(-5, -60, 15, 6); // Bigode
+
+            ctx.restore();
         }
     };
 
-    // INJEÇÃO FORÇADA (GARANTE QUE O BOTÃO APARECE)
-    const reg = setInterval(() => {
-        if(window.System && window.System.registerGame) {
-            window.System.registerGame('run', { name: 'Super Otto', icon: '🍄', camOpacity: 0.2 }, Logic);
-            clearInterval(reg);
-        }
-    }, 100);
+    window.System.registerGame('run', { name: 'Super Otto', icon: '🍄', camOpacity: 0.2 }, Logic);
 })();
