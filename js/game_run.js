@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * SUPER OTTO WORLD (MARIO STYLE)
+ * SUPER OTTO WORLD (VISUAL ANTIGO + FÍSICA NOVA)
  * =============================================================================
  */
 (function() {
@@ -28,15 +28,16 @@
         update: function(ctx, w, h, pose) {
             const cx = w/2; const horizon = h*0.45;
 
-            // 1. INPUT
+            // 1. INPUT (Suavizado)
             if(pose) {
                 const nose = pose.keypoints.find(k=>k.name==='nose');
                 if(nose && nose.score>0.4) {
                     const nx = nose.x / 640;
-                    if(nx < 0.4) this.player.lane = 1;      // Esquerda
-                    else if(nx > 0.6) this.player.lane = -1; // Direita
+                    if(nx < 0.4) this.player.lane = 1;
+                    else if(nx > 0.6) this.player.lane = -1;
                     else this.player.lane = 0;
 
+                    // Pulo (Se o nariz subir)
                     if(nose.y < 200 && !this.player.jumping) {
                         this.player.vy = PHYS.JUMP_FORCE;
                         this.player.jumping = true;
@@ -61,17 +62,18 @@
             if(Math.random()<0.02) this.addCloud();
             this.updateEntities();
 
-            // 3. RENDER (VISUAL MARIO)
+            // 3. RENDER (ESTILO CLÁSSICO RESTAURADO)
+            
+            // Céu e Nuvens
             const grad = ctx.createLinearGradient(0,0,0,horizon);
             grad.addColorStop(0, '#5c94fc'); grad.addColorStop(1, '#95b8ff');
             ctx.fillStyle = grad; ctx.fillRect(0,0,w,h);
-
             this.drawClouds(ctx, w, h);
 
             // Chão
             ctx.fillStyle = '#00aa00'; ctx.fillRect(0,horizon,w,h-horizon);
             
-            // Estrada (Perspectiva)
+            // Pista
             const roadTop = 20; const roadBot = w * 0.8;
             ctx.fillStyle = '#e67e22'; 
             ctx.beginPath();
@@ -79,9 +81,6 @@
             ctx.lineTo(cx+roadBot, h); ctx.lineTo(cx-roadBot, h);
             ctx.fill();
             
-            ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth=2;
-            ctx.beginPath(); ctx.moveTo(cx, horizon); ctx.lineTo(cx, h); ctx.stroke();
-
             // Objetos e Player
             this.objects.sort((a,b)=>b.z-a.z).forEach(o => this.drawObj(ctx, o, w, h, horizon));
             this.drawPlayer(ctx, cx + this.player.visualX, h - 50 + this.player.y, this.player.jumping);
@@ -156,25 +155,38 @@
         },
 
         drawPlayer: function(ctx, x, y, jump) {
+            // Sombra
             if(jump) { ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.ellipse(x, y-this.player.y, 40, 10, 0, 0, Math.PI*2); ctx.fill(); }
             
-            // Visual Mario simplificado (Círculos e Retângulos)
-            ctx.fillStyle = '#0039e6'; ctx.fillRect(x-20, y-60, 40, 40); // Azul
-            ctx.fillStyle = '#e60000'; // Vermelho
+            // Corpo (Macacão)
+            ctx.fillStyle = '#0039e6'; ctx.fillRect(x-20, y-60, 40, 40);
+            
+            // Camisa Vermelha
+            ctx.fillStyle = '#e60000'; 
             if(jump) { ctx.fillRect(x-35, y-75, 15, 30); ctx.fillRect(x+20, y-75, 15, 30); }
             else { ctx.fillRect(x-35, y-65, 15, 30); ctx.fillRect(x+20, y-65, 15, 30); }
             
-            ctx.fillStyle = '#ffccaa'; ctx.beginPath(); ctx.arc(x, y-75, 25, 0, Math.PI*2); ctx.fill(); // Rosto
-            ctx.fillStyle = '#000'; ctx.fillRect(x-10, y-70, 25, 8); // Bigode
+            // Rosto
+            ctx.fillStyle = '#ffccaa'; ctx.beginPath(); ctx.arc(x, y-75, 25, 0, Math.PI*2); ctx.fill();
             
-            ctx.fillStyle = '#e60000'; ctx.beginPath(); ctx.arc(x, y-85, 26, 0, Math.PI, true); ctx.fill(); // Chapéu
-            ctx.fillRect(x-28, y-85, 65, 12); // Aba
+            // Bigode
+            ctx.fillStyle = '#000'; ctx.fillRect(x-10, y-70, 25, 8); 
             
+            // Chapéu
+            ctx.fillStyle = '#e60000'; ctx.beginPath(); ctx.arc(x, y-85, 26, 0, Math.PI, true); ctx.fill();
+            ctx.fillRect(x-28, y-85, 65, 12);
+            
+            // Letra M
             ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y-92, 10, 0, Math.PI*2); ctx.fill();
             ctx.fillStyle = 'red'; ctx.font='bold 14px Arial'; ctx.textAlign='center'; ctx.fillText('M', x, y-88);
         }
     };
-    
-    // Check de segurança antes de registrar
-    if(window.System) window.System.registerGame('run', { name: 'Super Otto', icon: '🍄', camOpacity: 0.2 }, Logic);
+
+    // INJEÇÃO FORÇADA (GARANTE QUE O BOTÃO APARECE)
+    const reg = setInterval(() => {
+        if(window.System && window.System.registerGame) {
+            window.System.registerGame('run', { name: 'Super Otto', icon: '🍄', camOpacity: 0.2 }, Logic);
+            clearInterval(reg);
+        }
+    }, 100);
 })();
