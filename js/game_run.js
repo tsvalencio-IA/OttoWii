@@ -1,283 +1,329 @@
 /**
  * =============================================================================
- * OTTO SUPER RUN - NINTENDO 2.5D PLATFORMER ENGINE
+ * OTTO RUN - PLATAFORMA 2.5D (PHYSICS OVERHAUL)
  * =============================================================================
- * Lógica de plataforma com profundidade, física de pulo variável e 
- * detecção de colisão precisa.
+ * Lógica baseada em Mario: Aceleração, Inércia e Pulo Variável.
  */
 
 (function() {
-    const CONFIG = {
-        GRAVITY: 0.8,
-        JUMP_FORCE: -16,
-        RUN_SPEED: 12,
-        LANE_WIDTH: 250,
-        HORIZON: 0.4,
-        FOCAL_LENGTH: 400
+    const PHYS = {
+        GRAVITY: 2000,
+        JUMP_FORCE: -900,     // Força inicial
+        JUMP_HOLD: -1200,     // Força extra se segurar "cima"
+        RUN_BASE: 500,
+        RUN_MAX: 900,
+        ACCEL: 300,
+        LANE_W: 200
     };
 
     const Logic = {
         score: 0,
-        distance: 0,
-        state: 'calibrate', // calibrate, play, hit
+        state: 'ready', // ready, playing, dead
         
-        // Player State
+        // Player Physics Entity
         player: {
-            lane: 0,        // -1, 0, 1
-            visualX: 0,
             y: 0,
             vy: 0,
-            isJumping: false,
+            lane: 0,        // -1, 0, 1
+            visualX: 0,     // Para suavizar troca de lane
+            onGround: true,
             isCrouching: false,
-            animFrame: 0
+            jumpTimer: 0    // Para pulo variável
         },
 
-        // Calibration
-        calibData: [],
-        baseY: 0,
-
-        // World Objects
-        obstacles: [],
+        // World Generation
+        objects: [],
         decor: [],
-        lastSpawn: 0,
+        distance: 0,
+        speed: 0,
+        
+        // Calibration
+        baseY: 0,
+        calibrated: false,
 
         init() {
             this.score = 0;
+            this.state = 'ready';
             this.distance = 0;
-            this.state = 'calibrate';
-            this.calibData = [];
-            this.obstacles = [];
+            this.speed = PHYS.RUN_BASE;
+            this.objects = [];
             this.decor = [];
-            this.player = {
-                lane: 0, visualX: 0, y: 0, vy: 0,
-                isJumping: false, isCrouching: false, animFrame: 0
-            };
-            window.System.msg("POSIÇÃO INICIAL");
+            this.player = { y: 0, vy: 0, lane: 0, visualX: 0, onGround: true, isCrouching: false, jumpTimer: 0 };
+            this.calibrated = false;
         },
 
         update(ctx, w, h, pose, dt) {
             const cx = w / 2;
-            const cy = h * CONFIG.HORIZON;
-            const groundH = h - cy;
+            const horizon = h * 0.4;
+            const groundY = h;
 
-            // 1. INPUT & CALIBRATION
+            // 1. INPUT PROCESSING & PHYSICS
             if (pose) {
-                const nose = pose.keypoints.find(k => k.name === 'nose');
-                if (nose && nose.score > 0.5) {
-                    if (this.state === 'calibrate') {
-                        this.calibData.push(nose.y);
-                        this.drawCalibration(ctx, w, h, nose);
-                        if (this.calibData.length > 50) {
-                            this.baseY = this.calibData.reduce((a, b) => a + b) / this.calibData.length;
-                            this.state = 'play';
-                            window.System.msg("CORRA!");
-                        }
-                        return 0;
-                    }
-
-                    // Lane Control (Horizontal)
-                    if (nose.x < 640 * 0.35) this.player.lane = 1;
-                    else if (nose.x > 640 * 0.65) this.player.lane = -1;
-                    else this.player.lane = 0;
-
-                    // Jump/Crouch Control (Vertical)
-                    const diffY = nose.y - this.baseY;
-                    if (diffY < -50 && !this.player.isJumping) {
-                        this.player.vy = CONFIG.JUMP_FORCE;
-                        this.player.isJumping = true;
-                        window.Sfx.jump();
-                    }
-                    this.player.isCrouching = diffY > 60;
-                }
+                this.handleInput(pose, w, h, dt);
             }
 
-            if (this.state === 'play') {
-                this.distance += CONFIG.RUN_SPEED;
-                this.score = this.distance / 10;
+            if (this.state === 'playing') {
+                // Aceleração progressiva (Mario style)
+                this.speed = MathUtils.clamp(this.speed + PHYS.ACCEL * dt, PHYS.RUN_BASE, PHYS.RUN_MAX);
+                this.distance += this.speed * dt;
+                this.score = Math.floor(this.distance / 100);
 
-                // Physics
-                this.player.y += this.player.vy;
-                this.player.vy += CONFIG.GRAVITY;
-                if (this.player.y > 0) {
+                // Player Physics (Vertical)
+                this.player.vy += PHYS.GRAVITY * dt;
+                this.player.y += this.player.vy * dt;
+
+                // Ground Collision
+                if (this.player.y >= 0) {
                     this.player.y = 0;
                     this.player.vy = 0;
-                    this.player.isJumping = false;
+                    this.player.onGround = true;
+                } else {
+                    this.player.onGround = false;
                 }
 
-                // Smooth Lane Transition
-                const targetX = this.player.lane * CONFIG.LANE_WIDTH;
-                this.player.visualX += (targetX - this.player.visualX) * 0.2;
+                // Smooth Lane Switching (Lerp)
+                const targetX = this.player.lane * PHYS.LANE_W;
+                this.player.visualX = MathUtils.lerp(this.player.visualX, targetX, 10 * dt);
 
-                // Spawning
-                if (this.distance - this.lastSpawn > 800) {
-                    this.spawnObstacle();
-                    this.lastSpawn = this.distance;
-                }
-
-                // Update Obstacles
-                this.obstacles.forEach((o, i) => {
-                    o.z -= CONFIG.RUN_SPEED;
-                    if (o.z < -100) this.obstacles.splice(i, 1);
-                    
-                    // Collision Detection
-                    if (o.z > -20 && o.z < 20 && o.lane === this.player.lane) {
-                        const playerTop = this.player.y - (this.player.isCrouching ? 30 : 80);
-                        const playerBot = this.player.y;
-                        
-                        let hit = false;
-                        if (o.type === 'hurdle' && !this.player.isJumping) hit = true;
-                        if (o.type === 'block' && !this.player.isCrouching) hit = true;
-                        
-                        if (hit) {
-                            window.System.gameOver(this.score);
-                        }
-                    }
-                });
+                // Spawner
+                this.spawnManager();
+                
+                // Entity Update & Collision
+                this.updateEntities(dt);
             }
 
-            // 2. RENDERING
-            this.drawBackground(ctx, w, h, cy);
-            this.drawTrack(ctx, w, h, cy);
+            // 2. RENDER (Painter's Algorithm)
+            this.drawBackground(ctx, w, h, horizon);
+            this.drawTrack(ctx, w, h, horizon);
             
-            // Draw Obstacles (Z-Sorted)
-            this.obstacles.sort((a, b) => b.z - a.z).forEach(o => {
-                this.drawObject(ctx, w, h, cy, o);
-            });
+            // Sort objects by Z depth (far to near)
+            const renderList = [...this.objects].sort((a, b) => b.z - a.z);
+            renderList.forEach(obj => this.drawObject(ctx, obj, w, h, horizon));
 
-            this.drawPlayer(ctx, w, h, cy);
+            this.drawPlayer(ctx, w, h, horizon);
+
+            // UI de Calibração
+            if (!this.calibrated) {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0,0,w,h);
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'center';
+                ctx.font = '30px Inter';
+                ctx.fillText("FIQUE PARADO PARA CALIBRAR", w/2, h/2);
+            }
 
             return this.score;
         },
 
-        drawCalibration(ctx, w, h, nose) {
-            const m = window.Gfx.map(nose, w, h);
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-            ctx.fillRect(0, 0, w, h);
-            ctx.strokeStyle = '#00ffff';
-            ctx.lineWidth = 5;
-            ctx.beginPath();
-            ctx.arc(m.x, m.y, 40, 0, Math.PI * 2);
-            ctx.stroke();
-            
-            const progress = this.calibData.length / 50;
-            ctx.beginPath();
-            ctx.arc(w/2, h/2, 60, -Math.PI/2, -Math.PI/2 + (Math.PI*2*progress));
-            ctx.stroke();
+        handleInput(pose, w, h, dt) {
+            const nose = pose.keypoints.find(k => k.name === 'nose');
+            if (!nose || nose.score < 0.5) return;
+
+            // Calibração Inicial (define altura base do jogador)
+            if (!this.calibrated) {
+                this.baseY = nose.y;
+                this.calibrated = true;
+                this.state = 'playing';
+                window.Sfx.play(600, 'sine', 0.5, 0.1);
+                return;
+            }
+
+            // Lane Control (Zonas mortas para evitar jitter)
+            const nX = nose.x / 640; // 0.0 a 1.0
+            if (nX < 0.4) this.player.lane = 1;      // Esquerda (espelhado)
+            else if (nX > 0.6) this.player.lane = -1; // Direita
+            else this.player.lane = 0;
+
+            // Jump / Crouch Control
+            const diffY = nose.y - this.baseY;
+
+            // Pulo: Se nariz subir muito E estiver no chão
+            if (diffY < -40 && this.player.onGround) {
+                this.player.vy = PHYS.JUMP_FORCE;
+                this.player.onGround = false;
+                window.Sfx.jump();
+                // Efeito de partículas aqui seria ideal
+            }
+
+            // Agachar
+            this.player.isCrouching = diffY > 50;
         },
 
-        drawBackground(ctx, w, h, cy) {
-            // Sky
-            const grad = ctx.createLinearGradient(0, 0, 0, cy);
-            grad.addColorStop(0, '#5c94fc');
-            grad.addColorStop(1, '#95b8ff');
-            ctx.fillStyle = grad;
-            ctx.fillRect(0, 0, w, cy);
-
-            // Mountains/Clouds
-            ctx.fillStyle = '#7ba4f9';
-            for(let i=0; i<5; i++) {
-                const x = (i * w/4 + (this.distance*0.1)) % (w + 200) - 100;
-                ctx.beginPath();
-                ctx.arc(x, cy, 100, Math.PI, 0);
-                ctx.fill();
+        spawnManager() {
+            // Gera obstáculos a cada X metros
+            const spawnZ = 2000 + this.distance;
+            const lastObj = this.objects[this.objects.length - 1];
+            
+            if (!lastObj || (spawnZ - (lastObj.z + this.distance)) > 600) {
+                if (Math.random() < 0.6) {
+                    const type = Math.random() > 0.5 ? 'box' : 'barrier';
+                    this.objects.push({
+                        z: 2000, // Z relativo ao player
+                        lane: Math.floor(Math.random() * 3) - 1,
+                        type: type,
+                        passed: false
+                    });
+                }
             }
         },
 
-        drawTrack(ctx, w, h, cy) {
-            const groundH = h - cy;
-            ctx.fillStyle = '#00cc00'; // Grass
-            ctx.fillRect(0, cy, w, groundH);
+        updateEntities(dt) {
+            // Move objects towards player
+            for (let i = this.objects.length - 1; i >= 0; i--) {
+                const o = this.objects[i];
+                o.z -= this.speed * dt;
 
-            // Road Perspective
-            ctx.fillStyle = '#d65a4e'; // Track
+                // Colisão (AABB simples em 3D)
+                if (o.z < 50 && o.z > -50 && o.lane === this.player.lane) {
+                    let hit = false;
+                    
+                    if (o.type === 'barrier') {
+                        // Barreira precisa pular
+                        if (this.player.y > -50) hit = true; 
+                    } else if (o.type === 'box') {
+                        // Caixa precisa agachar
+                        if (!this.player.isCrouching) hit = true;
+                    }
+
+                    if (hit) {
+                        window.System.gameOver(this.score);
+                        return;
+                    }
+                }
+
+                // Cleanup e Score
+                if (o.z < -200) {
+                    this.objects.splice(i, 1);
+                    if (!o.passed) {
+                        o.passed = true;
+                        window.Sfx.coin();
+                    }
+                }
+            }
+        },
+
+        // --- RENDERIZADORES ---
+
+        drawBackground(ctx, w, h, hor) {
+            // Céu gradiente
+            const grad = ctx.createLinearGradient(0, 0, 0, hor);
+            grad.addColorStop(0, '#87CEEB');
+            grad.addColorStop(1, '#E0F7FA');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, w, hor);
+            
+            // Sol
+            ctx.fillStyle = '#FFD700';
             ctx.beginPath();
-            ctx.moveTo(w/2 - 40, cy);
-            ctx.lineTo(w/2 + 40, cy);
-            ctx.lineTo(w * 1.2, h);
-            ctx.lineTo(-w * 0.2, h);
+            ctx.arc(w * 0.8, hor * 0.3, 40, 0, Math.PI*2);
+            ctx.fill();
+        },
+
+        drawTrack(ctx, w, h, hor) {
+            // Chão
+            ctx.fillStyle = '#4CAF50';
+            ctx.fillRect(0, hor, w, h - hor);
+
+            // Pista (trapézio para perspectiva)
+            ctx.fillStyle = '#555';
+            ctx.beginPath();
+            ctx.moveTo(w/2 - 20, hor); // Ponto de fuga
+            ctx.lineTo(w/2 + 20, hor);
+            ctx.lineTo(w, h);
+            ctx.lineTo(0, h);
             ctx.fill();
 
-            // Lane Lines
-            ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+            // Linhas das lanes
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
             ctx.lineWidth = 2;
-            [-1, -0.33, 0.33, 1].forEach(l => {
+            [-1, 1].forEach(dir => {
+                const xTop = w/2 + (dir * 10);
+                const xBot = w/2 + (dir * w/3);
                 ctx.beginPath();
-                ctx.moveTo(w/2 + l * 40, cy);
-                ctx.lineTo(w/2 + l * w * 0.6, h);
+                ctx.moveTo(xTop, hor);
+                ctx.lineTo(xBot, h);
                 ctx.stroke();
             });
         },
 
-        spawnObstacle() {
-            const types = ['hurdle', 'block'];
-            this.obstacles.push({
-                lane: Math.floor(Math.random() * 3) - 1,
-                z: 2000,
-                type: types[Math.floor(Math.random() * types.length)]
-            });
-        },
+        drawObject(ctx, obj, w, h, hor) {
+            // Perspectiva simples: Scale = 1 / z
+            const k = 400; // Focal length
+            const scale = k / (k + obj.z);
+            if (scale < 0) return;
 
-        drawObject(ctx, w, h, cy, o) {
-            const scale = CONFIG.FOCAL_LENGTH / (CONFIG.FOCAL_LENGTH + o.z);
-            if (scale < 0.05) return;
-
-            const x = w/2 + (o.lane * CONFIG.LANE_WIDTH * scale);
-            const y = cy + (h - cy) * scale;
-            const size = 100 * scale;
+            const dw = w / 2;
+            const dh = h - hor; // Altura do chão na tela
+            
+            // Posição X projetada
+            const screenX = w/2 + (obj.lane * PHYS.LANE_W * scale);
+            const screenY = hor + (dh * scale); // Base do objeto no chão
+            
+            const size = 150 * scale;
 
             ctx.save();
-            if (o.type === 'hurdle') {
-                ctx.fillStyle = '#fff';
-                ctx.fillRect(x - size, y - size, size * 2, size);
-                ctx.fillStyle = '#f00';
-                ctx.fillRect(x - size, y - size, size * 2, size * 0.3);
+            ctx.translate(screenX, screenY);
+
+            if (obj.type === 'barrier') {
+                // Obstáculo baixo (pular)
+                ctx.fillStyle = '#e74c3c';
+                ctx.fillRect(-size/2, -size/2, size, size/2);
+                ctx.fillStyle = '#c0392b'; // Shading
+                ctx.fillRect(-size/2, -size/2, size, 5);
             } else {
-                ctx.fillStyle = '#f90';
-                ctx.fillRect(x - size, y - size * 2, size * 2, size * 0.8);
-                ctx.strokeStyle = '#fff';
-                ctx.strokeRect(x - size, y - size * 2, size * 2, size * 0.8);
+                // Obstáculo alto (agachar)
+                ctx.fillStyle = '#f39c12';
+                ctx.fillRect(-size/2, -size*1.5, size, size);
+                // Detalhe de caixa (?)
+                ctx.strokeStyle = '#d35400';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(-size/2, -size*1.5, size, size);
             }
             ctx.restore();
         },
 
-        drawPlayer(ctx, w, h, cy) {
-            const scale = 1.0;
-            const x = w/2 + this.player.visualX;
-            const y = h - 100 + this.player.y;
-            
+        drawPlayer(ctx, w, h, hor) {
+            const playerScreenX = w/2 + this.player.visualX; // Player está sempre "perto" da câmera (Z=0 visualmente)
+            const playerScreenY = h - 50 + this.player.y; // Y é negativo quando pula
+
             ctx.save();
-            ctx.translate(x, y);
-            
-            // Shadow
+            ctx.translate(playerScreenX, playerScreenY);
+
+            // Sombra (dá noção de altura)
             ctx.fillStyle = 'rgba(0,0,0,0.3)';
             ctx.beginPath();
-            ctx.ellipse(0, 0, 40, 15, 0, 0, Math.PI*2);
+            ctx.ellipse(0, -this.player.y, 40 + (this.player.y*0.1), 10, 0, 0, Math.PI*2);
             ctx.fill();
 
-            // Character (Mario Style Placeholder)
-            const bodyH = this.player.isCrouching ? 40 : 80;
-            ctx.fillStyle = '#f00'; // Red Shirt
-            ctx.fillRect(-25, -bodyH, 50, bodyH);
-            ctx.fillStyle = '#00f'; // Blue Pants
-            ctx.fillRect(-25, -bodyH * 0.4, 50, bodyH * 0.4);
-            ctx.fillStyle = '#ffdbac'; // Face
-            ctx.beginPath();
-            ctx.arc(0, -bodyH - 20, 25, 0, Math.PI*2);
-            ctx.fill();
-            ctx.fillStyle = '#f00'; // Hat
-            ctx.fillRect(-25, -bodyH - 45, 50, 15);
+            // Corpo
+            ctx.fillStyle = '#3498db';
+            const height = this.player.isCrouching ? 40 : 80;
             
+            // Squash & Stretch simples
+            let scaleX = 1, scaleY = 1;
+            if (!this.player.onGround) { scaleX = 0.9; scaleY = 1.1; } // Stretch no ar
+            if (Math.abs(this.player.vy) < 10 && this.player.onGround) { scaleX = 1.1; scaleY = 0.9; } // Squash no impacto
+
+            ctx.scale(scaleX, scaleY);
+            
+            // Corpo (Capsula)
+            ctx.beginPath();
+            ctx.roundRect(-25, -height, 50, height, 10);
+            ctx.fill();
+
+            // Cabeça
+            ctx.fillStyle = '#f1c40f'; // Rosto
+            ctx.beginPath();
+            ctx.arc(0, -height - 15, 20, 0, Math.PI*2);
+            ctx.fill();
+
+            // Bonezinho
+            ctx.fillStyle = '#e74c3c';
+            ctx.fillRect(-22, -height - 35, 44, 10);
+
             ctx.restore();
         }
     };
 
-    // Registro Robusto
-    function tryRegister() {
-        if (window.System && typeof window.System.registerGame === 'function') {
-            window.System.registerGame('run', 'Otto Run', '🏃', Logic);
-        } else {
-            setTimeout(tryRegister, 200);
-        }
-    }
-    tryRegister();
+    window.System.registerGame('run', { name: 'Otto Run', icon: '🏃' }, Logic);
 })();
