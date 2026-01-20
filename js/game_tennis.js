@@ -1,134 +1,248 @@
 /**
  * =============================================================================
- * OTTO TENNIS (WII SPORTS PHYSICS)
+ * OTTO TENNIS PRO - REAL VECTOR PHYSICS
+ * =============================================================================
+ * Lógica: Utiliza álgebra vetorial real para calcular a trajetória da bola.
+ * Diferencial: Controle direcional baseado no ponto de impacto (Sweet Spot).
  * =============================================================================
  */
 
 (function() {
+    // Configurações da Quadra (Metros virtuais)
+    const COURT = { W: 400, L: 1000, NET_H: 50 };
+    
+    // Física
+    const PHYS = {
+        GRAVITY: 0.5,
+        DRAG: 0.99,
+        BOUNCE_LOSS: 0.75,
+        HIT_POWER: 28,      // Força base da raquete
+        SPIN_FACTOR: 0.3    // Influência do movimento vertical da mão
+    };
+
     const Logic = {
         score: 0,
-        state: 'calibrate',
-        ball: { x:0, y:0, z:0, vx:0, vy:0, vz:0 },
-        racket: { x:0, y:0 },
-        handRef: { x:0, y:0 }, // Centro
-        timer: 0,
+        state: 'serve', // serve, play, point_end
+        msg: "",
+        
+        // Entidades
+        ball: { x:0, y:0, z:0, vx:0, vy:0, vz:0, spinning:0 },
+        racket: { x:0, y:0, z:0, vx:0, vy:0 }, // Z é fixo na tela (0)
+        
+        // Hand Tracking History (para calcular velocidade do swing)
+        lastHand: { x:0, y:0, time:0 },
+        handVel: { x:0, y:0 },
+
+        // Calibração
+        centerRef: { x:0, y:0 },
 
         init: function() {
             this.score = 0;
-            this.state = 'calibrate';
-            this.timer = 0;
-            this.racket = {x:0, y:0};
-            window.System.msg("CENTRALIZAR MÃO");
+            this.state = 'serve';
+            this.centerRef = { x:0, y:0 };
+            this.prepareServe();
+            window.System.msg("SAQUE!");
         },
 
-        resetBall: function() {
-            this.ball = { x:0, y:-400, z:1400, vx:(Math.random()-0.5)*20, vy:5, vz:-35 };
+        prepareServe: function() {
+            // Bola flutua na frente do jogador esperando o saque
+            this.ball = { x: 50, y: -150, z: 50, vx: 0, vy: 0, vz: 0, spinning: 0 };
+            this.state = 'serve';
         },
 
         update: function(ctx, w, h, pose) {
-            const cx = w/2; const cy = h/2;
+            const now = Date.now();
+            const cx = w/2; 
+            const cy = h/2;
 
-            // Input
-            let hand = null;
+            // =================================================================
+            // 1. INPUT VETORIAL
+            // =================================================================
             if(pose) {
-                const r = pose.keypoints.find(k=>k.name==='right_wrist');
-                if(r && r.score>0.4) hand = window.Gfx.map(r, w, h);
-            }
+                // Prioriza mão direita
+                const rw = pose.keypoints.find(k=>k.name==='right_wrist');
+                if(rw && rw.score > 0.3) {
+                    // Mapeia para coordenadas do canvas
+                    const handPos = window.Gfx.map(rw, w, h);
+                    
+                    // Se for o primeiro frame, calibra o centro
+                    if(this.centerRef.x === 0) this.centerRef = { x: handPos.x, y: handPos.y + 100 };
 
-            // Calibração
-            if(this.state === 'calibrate') {
-                ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(0,0,w,h);
-                ctx.strokeStyle = '#0f0'; ctx.lineWidth = 5;
-                ctx.beginPath(); ctx.arc(cx, cy, 60, 0, Math.PI*2); ctx.stroke();
-                ctx.fillStyle = '#fff'; ctx.textAlign='center'; ctx.font='20px Arial';
-                ctx.fillText("MANTENHA A MÃO NO CÍRCULO", cx, cy-80);
-
-                if(hand) {
-                    ctx.fillStyle='#0f0'; ctx.beginPath(); ctx.arc(hand.x, hand.y, 15, 0, Math.PI*2); ctx.fill();
-                    if(Math.hypot(hand.x-cx, hand.y-cy) < 60) {
-                        this.timer++;
-                        ctx.fillRect(cx-50, cy+80, this.timer*2, 10);
-                        if(this.timer>50) {
-                            this.handRef = {x:hand.x, y:hand.y};
-                            this.state = 'play';
-                            this.resetBall();
-                            window.System.msg("SAQUE!");
-                            window.Sfx.coin();
-                        }
-                    } else this.timer=0;
+                    // Calcula Posição da Raquete (Relativa ao centro do corpo)
+                    // Amplificação x2.0 para cobrir a quadra sem andar
+                    this.racket.x = (handPos.x - this.centerRef.x) * 2.5;
+                    this.racket.y = (handPos.y - this.centerRef.y) * 2.0;
+                    
+                    // Calcula VELOCIDADE DO SWING (px/ms)
+                    const dt = now - this.lastHand.time;
+                    if(dt > 0) {
+                        this.racket.vx = (this.racket.x - this.lastHand.x); // Swing lateral
+                        this.racket.vy = (this.racket.y - this.lastHand.y); // Top Spin/Slice
+                    }
+                    this.lastHand = { x: this.racket.x, y: this.racket.y, time: now };
                 }
-                return 0;
             }
 
-            // Jogo
-            if(hand) {
-                this.racket.x = cx + (hand.x - this.handRef.x) * 2.5; // Amplifica movimento
-                this.racket.y = cy + (hand.y - this.handRef.y) * 2.5;
-            }
-
-            // Física Bola
-            this.ball.x += this.ball.vx;
-            this.ball.y += this.ball.vy;
-            this.ball.z += this.ball.vz;
-            if(this.ball.y < 200) this.ball.vy += 0.9; // Gravidade
-            if(this.ball.y > 200) { this.ball.y=200; this.ball.vy *= -0.8; } // Quique
-
-            // Rebatida
-            if(this.ball.z < 100 && this.ball.vz < 0) {
-                const scale = 500/(500+this.ball.z);
-                const bx = cx + this.ball.x * scale;
-                const by = cy + (this.ball.y+100) * scale;
+            // =================================================================
+            // 2. FÍSICA DA BOLA
+            // =================================================================
+            if(this.state !== 'serve') {
+                this.ball.x += this.ball.vx;
+                this.ball.y += this.ball.vy;
+                this.ball.z += this.ball.vz;
+                this.ball.vy += PHYS.GRAVITY; // Gravidade
                 
-                if(Math.hypot(bx-this.racket.x, by-this.racket.y) < 120) {
-                    window.Sfx.hit();
-                    this.score++;
-                    window.Gfx.shake(5);
-                    this.ball.vz = 45; // Rebate fundo
-                    this.ball.vy = -25;
-                    this.ball.vx = (bx - this.racket.x) * 0.5;
+                // Quique no chão (y = 200 é o chão)
+                if(this.ball.y > 200) {
+                    this.ball.y = 200;
+                    this.ball.vy *= -PHYS.BOUNCE_LOSS;
+                    window.Sfx.click(); // Som de quique
+                    
+                    // Verifica se saiu da quadra
+                    if(Math.abs(this.ball.x) > COURT.W && this.ball.z > 0) {
+                        this.finishPoint("FORA!", -1);
+                    }
+                }
+
+                // Rede (Colisão simples)
+                if(this.ball.z > 680 && this.ball.z < 720 && this.ball.y > 200 - COURT.NET_H) {
+                    this.ball.vz *= -0.2; // Bate e cai
+                    this.ball.vy = 5;
                 }
             }
 
-            // CPU Devolve
-            if(this.ball.z > 1400 && this.ball.vz > 0) {
-                window.Sfx.click();
-                this.ball.vz = -40;
-                this.ball.vx = (Math.random()-0.5)*30;
-                this.ball.vy = -20;
+            // =================================================================
+            // 3. DETECÇÃO DE COLISÃO (O SEGREDO DA JOGABILIDADE)
+            // =================================================================
+            // A bola só é rebatível se estiver perto do plano da câmera (Z < 100)
+            if(this.ball.z < 100 && this.ball.z > -50) {
+                
+                // Distância Raquete <-> Bola
+                // Nota: racket.x/y são coordenadas de mundo local, ball.x/y também
+                const dist = Math.hypot(this.ball.x - this.racket.x, this.ball.y - this.racket.y);
+                
+                // Raio da raquete = 80
+                if(dist < 80) {
+                    if(this.state === 'serve') this.state = 'play';
+                    
+                    window.Sfx.hit();
+                    window.Gfx.shake(5);
+
+                    // --- VETOR DE REBATIDA ---
+                    
+                    // 1. Direção Básica (Para o fundo)
+                    this.ball.vz = PHYS.HIT_POWER + Math.abs(this.racket.vy * 0.2);
+                    
+                    // 2. Direção Lateral (Aiming)
+                    // Se bater cedo (bola a direita), vai pra esquerda (cruzada)
+                    // Se bater tarde (bola a esquerda), vai pra direita
+                    // + Influência do movimento lateral da mão
+                    this.ball.vx = (this.ball.x - this.racket.x) * 0.5 + (this.racket.vx * 0.5);
+                    
+                    // 3. Altura (Lob vs Smash)
+                    // Se bater de cima pra baixo (Smash), vy aumenta
+                    this.ball.vy = -10 + (this.racket.vy * 0.3); 
+                    
+                    // Spin visual
+                    this.ball.spinning = this.racket.vx;
+                }
+            }
+            
+            // Perdeu a bola?
+            if(this.ball.z < -200) {
+                this.finishPoint("MISS", -1);
             }
 
-            if(this.ball.z < -200) window.System.gameOver(this.score);
+            // =================================================================
+            // 4. IA DO OPONENTE (GHOST)
+            // =================================================================
+            if(this.ball.z > 1400 && this.ball.vz > 0) {
+                // CPU devolve
+                window.Sfx.click();
+                this.ball.vz = -(PHYS.HIT_POWER * 0.9 + (this.score * 0.5)); // Fica mais rápido
+                this.ball.vx = (Math.random() - 0.5) * (COURT.W * 1.5); // Mira na quadra toda
+                this.ball.vy = -15; // Lob padrão
+                this.score++;
+            }
 
-            // Render
-            // Quadra Azul
-            ctx.fillStyle = '#2980b9'; ctx.fillRect(0,0,w,h);
-            ctx.strokeStyle = '#fff'; ctx.lineWidth=4;
-            const p = (x,y,z) => { const s=500/(500+z); return {x:cx+x*s, y:cy+(y+200)*s}; };
+            // =================================================================
+            // 5. RENDERIZAÇÃO 3D
+            // =================================================================
             
-            // Linhas
-            const p1=p(-400,0,1400), p2=p(400,0,1400), p3=p(400,0,0), p4=p(-400,0,0);
-            ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.lineTo(p4.x,p4.y); ctx.closePath(); ctx.stroke();
+            // Projeção Perspectiva
+            const project = (x, y, z) => {
+                const fov = 600;
+                const scale = fov / (fov + z);
+                return { 
+                    x: cx + x * scale, 
+                    y: cy + y * scale, 
+                    s: scale 
+                };
+            };
+
+            // Céu e Chão
+            ctx.fillStyle = '#2980b9'; ctx.fillRect(0,0,w,h); // Chão Azul
+            ctx.fillStyle = '#87CEEB'; ctx.fillRect(0,0,w,cy); // Céu
+
+            // Desenha Quadra
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+            ctx.beginPath();
+            const p1 = project(-COURT.W, 200, 1400);
+            const p2 = project(COURT.W, 200, 1400);
+            const p3 = project(COURT.W, 200, 0);
+            const p4 = project(-COURT.W, 200, 0);
+            ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.lineTo(p3.x, p3.y); ctx.lineTo(p4.x, p4.y); ctx.closePath(); ctx.stroke();
             
             // Rede
-            const n1=p(-400,-100,700), n2=p(400,-100,700);
-            ctx.beginPath(); ctx.moveTo(n1.x,n1.y); ctx.lineTo(n2.x,n2.y); ctx.stroke();
+            const n1 = project(-COURT.W, 200 - COURT.NET_H, 700);
+            const n2 = project(COURT.W, 200 - COURT.NET_H, 700);
+            const n3 = project(COURT.W, 200, 700);
+            const n4 = project(-COURT.W, 200, 700);
+            ctx.fillStyle = 'rgba(0,0,0,0.2)';
+            ctx.beginPath(); ctx.moveTo(n1.x, n1.y); ctx.lineTo(n2.x, n2.y); ctx.lineTo(n3.x, n3.y); ctx.lineTo(n4.x, n4.y); ctx.fill();
+            ctx.fillStyle = '#fff'; ctx.fillRect(n1.x, n1.y, n2.x-n1.x, 2); // Faixa branca
 
-            // Sombra e Bola
-            const sp = p(this.ball.x, 200, this.ball.z);
-            const ssc = 500/(500+this.ball.z);
-            ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(sp.x, sp.y, 20*ssc, 10*ssc, 0,0,Math.PI*2); ctx.fill();
+            // Sombra da Bola
+            const bShadow = project(this.ball.x, 200, this.ball.z);
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            ctx.beginPath(); ctx.ellipse(bShadow.x, bShadow.y, 20*bShadow.s, 10*bShadow.s, 0, 0, Math.PI*2); ctx.fill();
 
-            const bp = p(this.ball.x, this.ball.y, this.ball.z);
-            ctx.fillStyle = '#ffeb3b'; ctx.beginPath(); ctx.arc(bp.x, bp.y, 25*ssc, 0, Math.PI*2); ctx.fill();
+            // Bola
+            const bProj = project(this.ball.x, this.ball.y, this.ball.z);
+            ctx.fillStyle = '#eeff00';
+            ctx.beginPath(); ctx.arc(bProj.x, bProj.y, 25*bProj.s, 0, Math.PI*2); ctx.fill();
+            // Detalhe do Spin na bola
+            ctx.strokeStyle = '#cca000'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(bProj.x, bProj.y, 25*bProj.s, 0, Math.PI*2); ctx.stroke();
 
-            // Raquete
-            ctx.fillStyle = 'rgba(231,76,60,0.7)'; ctx.strokeStyle='#fff';
-            ctx.beginPath(); ctx.arc(this.racket.x, this.racket.y, 60, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(this.racket.x, this.racket.y+60); ctx.lineTo(this.racket.x, this.racket.y+150); ctx.lineWidth=10; ctx.stroke();
+            // Raquete (Fantasma vermelho seguindo a mão)
+            const rProj = project(this.racket.x, this.racket.y, 0);
+            ctx.save();
+            ctx.translate(rProj.x, rProj.y);
+            // Inclina a raquete com o movimento
+            ctx.rotate(this.racket.vx * 0.02);
+            
+            // Cabo
+            ctx.fillStyle = '#333'; ctx.fillRect(-5, 0, 10, 80);
+            // Cabeça
+            ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 5;
+            ctx.fillStyle = 'rgba(192, 57, 43, 0.3)';
+            ctx.beginPath(); ctx.ellipse(0, -40, 40, 50, 0, 0, Math.PI*2); 
+            ctx.fill(); ctx.stroke();
+            ctx.restore();
 
             return this.score;
+        },
+
+        finishPoint: function(msg, points) {
+            window.System.msg(msg);
+            if(points < 0) {
+                window.System.gameOver(this.score);
+            } else {
+                this.score += points;
+                setTimeout(() => this.prepareServe(), 1000);
+            }
         }
     };
 
-    window.OTTO_GAMES['tennis'] = { name: 'Otto Tennis', icon: '🎾', camOpacity: 0.5, logic: Logic };
+    window.System.registerGame('tennis', { name: 'Pro Tennis', icon: '🎾', camOpacity: 0.4 }, Logic);
 })();
