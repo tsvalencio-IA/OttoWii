@@ -1,113 +1,86 @@
 /**
  * =============================================================================
- * THIAGUINHO SOLUÇÕES - CORE ENGINE v4.0 (WII ARCHITECTURE)
+ * THIAGUINHO SOLUÇÕES - CORE ENGINE v4.1 (STABLE FIX)
  * =============================================================================
- * O cérebro do sistema. Gerencia Webcam, IA (MoveNet), Áudio e Renderização.
+ * Correções: Segurança no lançamento de jogos e tratamento de erros de áudio.
  */
 
 window.Sfx = {
     ctx: null,
     
     init() {
-        window.AudioContext = window.AudioContext || window.webkitAudioContext;
-        this.ctx = new AudioContext();
+        try {
+            window.AudioContext = window.AudioContext || window.webkitAudioContext;
+            this.ctx = new AudioContext();
+        } catch(e) { console.warn("Audio não suportado"); }
     },
 
-    // Sintetizador de ondas para não depender de arquivos mp3 externos
     play(freq, type, duration, vol = 0.1, slide = 0) {
         if (!this.ctx) return;
-        if (this.ctx.state === 'suspended') this.ctx.resume();
+        // Resume áudio suspenso (comum no Chrome Mobile)
+        if (this.ctx.state === 'suspended') this.ctx.resume().catch(()=>{});
 
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        
-        osc.type = type; // 'sine', 'square', 'sawtooth', 'triangle'
-        osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
-        
-        // Pitch slide (ex: som de pulo faz "uuiiip")
-        if (slide !== 0) {
-            osc.frequency.linearRampToValueAtTime(freq + slide, this.ctx.currentTime + duration);
-        }
+        try {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+            
+            if (slide !== 0) {
+                osc.frequency.linearRampToValueAtTime(freq + slide, this.ctx.currentTime + duration);
+            }
 
-        gain.gain.setValueAtTime(vol, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+            gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
 
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-        osc.start();
-        osc.stop(this.ctx.currentTime + duration);
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start();
+            osc.stop(this.ctx.currentTime + duration);
+        } catch(e) { /* Ignora erro de audio para não travar o jogo */ }
     },
 
-    // --- BIBLIOTECA DE SONS NINTENDO ---
-    boot() { 
-        this.play(600, 'sine', 0.1, 0.1); 
-        setTimeout(() => this.play(800, 'sine', 0.4, 0.1), 100);
-    },
+    // Sons do Sistema
+    boot() { this.play(600, 'sine', 0.1, 0.1); setTimeout(() => this.play(800, 'sine', 0.4, 0.1), 100); },
     hover() { this.play(400, 'sine', 0.05, 0.05); },
     click() { this.play(1200, 'sine', 0.1, 0.1); },
     back() { this.play(300, 'triangle', 0.1, 0.1, -100); },
     
-    // In-Game
-    jump() { this.play(150, 'square', 0.2, 0.1, 300); }, // O clássico som de pulo
-    coin() { 
-        this.play(988, 'square', 0.08, 0.1); 
-        setTimeout(() => this.play(1319, 'square', 0.3, 0.1), 80); 
-    },
-    bump() { this.play(100, 'sawtooth', 0.1, 0.2, -50); }, // Bater cabeça
-    crash() { this.play(80, 'sawtooth', 0.4, 0.4, -60); }, // Dano
-    powerup() {
-        [500, 700, 900, 1100, 1300].forEach((f, i) => {
-            setTimeout(() => this.play(f, 'sine', 0.1, 0.1), i * 80);
-        });
-    }
+    // Sons de Jogo
+    jump() { this.play(150, 'square', 0.2, 0.1, 300); },
+    coin() { this.play(988, 'square', 0.08, 0.1); setTimeout(() => this.play(1319, 'square', 0.3, 0.1), 80); },
+    bump() { this.play(100, 'sawtooth', 0.1, 0.2, -50); },
+    crash() { this.play(80, 'sawtooth', 0.4, 0.4, -60); }
 };
 
 window.Gfx = {
     shakePower: 0,
-    
-    // Transforma coordenadas da webcam (640x480) para o canvas
     map(kp, w, h) {
-        return {
-            x: w - (kp.x / 640 * w), // Espelhado horizontalmente
-            y: kp.y / 480 * h,
-            score: kp.score
-        };
+        return { x: w - (kp.x / 640 * w), y: kp.y / 480 * h, score: kp.score };
     },
-
-    shake(amount) {
-        this.shakePower = amount;
-    },
-
+    shake(amount) { this.shakePower = amount; },
     updateShake(ctx) {
         if (this.shakePower > 0) {
             const dx = (Math.random() - 0.5) * this.shakePower;
             const dy = (Math.random() - 0.5) * this.shakePower;
             ctx.translate(dx, dy);
-            this.shakePower *= 0.9; // Decaimento suave
+            this.shakePower *= 0.9;
             if (this.shakePower < 0.5) this.shakePower = 0;
         }
     },
-
-    // Desenha esqueleto para debug ou jogos de dança
     drawSkeleton(ctx, pose, w, h, color = '#00ffff') {
         if (!pose) return;
         const kp = pose.keypoints;
         const find = n => kp.find(k => k.name === n);
-
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 4;
-        ctx.lineCap = 'round';
-
+        ctx.strokeStyle = color; ctx.lineWidth = 4; ctx.lineCap = 'round';
         const connect = (a, b) => {
-            const p1 = find(a);
-            const p2 = find(b);
+            const p1 = find(a), p2 = find(b);
             if (p1 && p2 && p1.score > 0.3 && p2.score > 0.3) {
-                const c1 = this.map(p1, w, h);
-                const c2 = this.map(p2, w, h);
+                const c1 = this.map(p1, w, h), c2 = this.map(p2, w, h);
                 ctx.beginPath(); ctx.moveTo(c1.x, c1.y); ctx.lineTo(c2.x, c2.y); ctx.stroke();
             }
         };
-
         connect('left_shoulder', 'right_shoulder');
         connect('left_shoulder', 'left_elbow'); connect('left_elbow', 'left_wrist');
         connect('right_shoulder', 'right_elbow'); connect('right_elbow', 'right_wrist');
@@ -118,21 +91,17 @@ window.System = {
     video: null, canvas: null, ctx: null, detector: null,
     activeGame: null, loopId: null, games: {},
     
-    // Registro de Jogos
     registerGame(id, meta, logic) {
         this.games[id] = { meta, logic };
         if(document.getElementById('channel-grid')) this.renderMenu();
     },
 
-    // Inicialização do Hardware
     async boot() {
         const log = document.getElementById('boot-log');
         log.innerText = "INICIALIZANDO HARDWARE...";
         window.Sfx.init();
-        window.Sfx.boot();
-
+        
         try {
-            // Webcam
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: { width: 640, height: 480, facingMode: 'user' }, audio: false
             });
@@ -142,7 +111,6 @@ window.System = {
             await new Promise(r => this.video.onloadedmetadata = r);
             this.video.play(); document.getElementById('webcam').play();
 
-            // TensorFlow MoveNet
             log.innerText = "CARREGANDO REDE NEURAL...";
             await tf.setBackend('webgl');
             this.detector = await poseDetection.createDetector(
@@ -150,41 +118,35 @@ window.System = {
                 { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
             );
 
-            // Canvas
             this.canvas = document.getElementById('game-canvas');
             this.ctx = this.canvas.getContext('2d', { alpha: false });
             this.resize();
             window.addEventListener('resize', () => this.resize());
 
-            // UI Transition
             document.getElementById('screen-safety').classList.add('hidden');
+            window.Sfx.boot();
             this.menu();
 
         } catch (e) {
-            alert("Erro Fatal: Câmera não encontrada. " + e.message);
+            alert("Erro Fatal: Câmera não detectada. " + e.message);
         }
     },
 
     renderMenu() {
         const grid = document.getElementById('channel-grid');
+        if(!grid) return;
         grid.innerHTML = '';
         const keys = Object.keys(this.games);
         
-        // Cria os canais de jogos
         keys.forEach(k => {
             const g = this.games[k];
             const div = document.createElement('div');
             div.className = 'channel';
             div.onclick = () => this.launch(k);
-            div.onmouseenter = () => window.Sfx.hover();
-            div.innerHTML = `
-                <div class="channel-icon">${g.meta.icon}</div>
-                <div class="channel-title">${g.meta.name}</div>
-            `;
+            div.innerHTML = `<div class="channel-icon">${g.meta.icon}</div><div class="channel-title">${g.meta.name}</div>`;
             grid.appendChild(div);
         });
 
-        // Preenche espaços vazios estilo Wii
         const slots = Math.max(12, keys.length + (4 - keys.length % 4));
         for(let i = keys.length; i < slots; i++) {
             grid.innerHTML += `<div class="channel" style="background:#eee; opacity:0.5; border-style:dashed;"></div>`;
@@ -201,17 +163,30 @@ window.System = {
     },
 
     launch(id) {
-        window.Sfx.click();
-        const g = this.games[id];
-        this.activeGame = g;
-        
-        document.getElementById('screen-menu').classList.add('hidden');
-        document.getElementById('game-ui').classList.remove('hidden');
-        document.getElementById('webcam').style.opacity = g.meta.camOpacity || 0.2;
-        document.getElementById('ui-wheel').style.opacity = g.meta.showWheel ? 1 : 0;
+        try {
+            window.Sfx.click();
+            const g = this.games[id];
+            this.activeGame = g;
+            
+            // Troca de Telas (Forçada)
+            document.getElementById('screen-menu').classList.add('hidden');
+            document.getElementById('game-ui').classList.remove('hidden');
+            
+            // Configurações de Hardware (Seguras)
+            const camEl = document.getElementById('webcam');
+            if(camEl) camEl.style.opacity = g.meta.camOpacity || 0.2;
+            
+            const wheelEl = document.getElementById('ui-wheel');
+            if(wheelEl) wheelEl.style.opacity = g.meta.showWheel ? 1 : 0;
 
-        g.logic.init();
-        this.loop();
+            // Inicia Lógica
+            g.logic.init();
+            this.loop();
+        } catch(e) {
+            console.error(e);
+            alert("Erro ao iniciar jogo: " + e.message);
+            this.menu();
+        }
     },
 
     restart() {
@@ -220,27 +195,20 @@ window.System = {
             document.getElementById('game-ui').classList.remove('hidden');
             this.activeGame.logic.init();
             this.loop();
-        } else {
-            this.menu();
-        }
+        } else { this.menu(); }
     },
 
-    home() {
-        window.Sfx.back();
-        this.menu();
-    },
+    home() { window.Sfx.back(); this.menu(); },
 
     async loop() {
         if (!this.activeGame) return;
 
-        // 1. Detecção IA
         let pose = null;
         try {
             const poses = await this.detector.estimatePoses(this.video, { flipHorizontal: false });
             if (poses.length > 0) pose = poses[0];
         } catch (e) {}
 
-        // 2. Renderização
         const w = this.canvas.width;
         const h = this.canvas.height;
         this.ctx.clearRect(0,0,w,h);
@@ -250,9 +218,7 @@ window.System = {
         const score = this.activeGame.logic.update(this.ctx, w, h, pose);
         this.ctx.restore();
 
-        // 3. UI
         document.getElementById('hud-score').innerText = Math.floor(score);
-
         this.loopId = requestAnimationFrame(() => this.loop());
     },
 
@@ -263,7 +229,7 @@ window.System = {
 
     gameOver(score) {
         this.stopGame();
-        window.Sfx.play(100, 'sawtooth', 0.5, 0.5, -50); // Som de derrota
+        window.Sfx.crash();
         document.getElementById('final-score').innerText = Math.floor(score);
         document.getElementById('game-ui').classList.add('hidden');
         document.getElementById('screen-over').classList.remove('hidden');
@@ -271,9 +237,11 @@ window.System = {
 
     msg(txt) {
         const el = document.getElementById('game-msg');
-        el.innerText = txt;
-        el.classList.add('pop');
-        setTimeout(() => el.classList.remove('pop'), 1500);
+        if(el) {
+            el.innerText = txt;
+            el.classList.add('pop');
+            setTimeout(() => el.classList.remove('pop'), 1500);
+        }
     },
 
     resize() {
