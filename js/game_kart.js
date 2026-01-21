@@ -7,6 +7,7 @@
  * 1. Física: Carro vira trocando sprites (Yaw) e não girando a tela (Roll).
  * 2. Pista: Geometria real com curvas em S, colinas e zebras.
  * 3. Visual: Sprites Pixel Art desenhados proceduralmente no Canvas.
+ * 4. Patch: SISTEMA DE TURBO INTEGRADO (NINTENDO WII STYLE)
  * =============================================================================
  */
 
@@ -30,7 +31,14 @@
         DECEL: -20,            
         OFF_ROAD_DECEL: -180,  // Penalidade na grama
         OFF_ROAD_LIMIT: 16000, 
-        CENTRIFUGAL: 0.35      // Força G nas curvas
+        CENTRIFUGAL: 0.35,     // Força G nas curvas
+        
+        // --- CONSTANTES DE TURBO ---
+        NITRO_MAX: 100,
+        NITRO_DRAIN: 1.5,      // Consumo por frame
+        NITRO_RECHARGE: 0.3,   // Recarga por frame
+        TURBO_BOOST: 1.6,      // Multiplicador de aceleração
+        TURBO_MAX_SPEED: 18000 // Velocidade máxima no turbo
     };
 
     // --- PALETA DE CORES NINTENDO ---
@@ -53,6 +61,10 @@
         steer: 0,           // Valor do volante (-1 a 1)
         gas: false,         // Acelerador
         
+        // Sistema de Turbo
+        nitro: 100,         // Barra de nitro (0-100)
+        isTurboActive: false, // Estado do turbo
+        
         // Geometria
         segments: [],       // Array de segmentos da pista
         trackLength: 0,     // Comprimento total
@@ -74,6 +86,8 @@
             this.steer = 0;
             this.lap = 1;
             this.time = 0;
+            this.nitro = 100;
+            this.isTurboActive = false;
             
             // Construir Pista e Carros
             this.resetRoad();
@@ -178,53 +192,84 @@
             this.time++;
             
             // 1. INPUT (Pose Detection)
-let targetSteer = this.steer; // mantém último ângulo por padrão
-let hands = 0;
+            let targetSteer = this.steer; // mantém último ângulo por padrão
+            let hands = 0;
+            this.isTurboActive = false; // Reset frame a frame, reativado pela lógica
 
-if (pose) {
-    const lw = pose.keypoints.find(k=>k.name==='left_wrist');
-    const rw = pose.keypoints.find(k=>k.name==='right_wrist');
+            if (pose) {
+                const lw = pose.keypoints.find(k=>k.name==='left_wrist');
+                const rw = pose.keypoints.find(k=>k.name==='right_wrist');
+                
+                const lwOk = lw && lw.score > 0.4;
+                const rwOk = rw && rw.score > 0.4;
 
-    const lwOk = lw && lw.score > 0.4;
-    const rwOk = rw && rw.score > 0.4;
+                hands = (lwOk ? 1 : 0) + (rwOk ? 1 : 0);
 
-    hands = (lwOk ? 1 : 0) + (rwOk ? 1 : 0);
+                // DUAS MÃOS → volante completo
+                if (hands === 2) {
+                    const dx = rw.x - lw.x;
+                    const dy = rw.y - lw.y;
+                    const angle = Math.atan2(dy, dx);
 
-    // DUAS MÃOS → volante completo
-    if (hands === 2) {
-        const dx = rw.x - lw.x;
-        const dy = rw.y - lw.y;
-        const angle = Math.atan2(dy, dx);
+                    this.drawWheelUI(ctx, w, h, angle);
 
-        this.drawWheelUI(ctx, w, h, angle);
+                    targetSteer = angle * 2.5;
+                    if (Math.abs(targetSteer) < 0.1) targetSteer = 0;
+                    targetSteer = Math.max(-1.5, Math.min(1.5, targetSteer));
 
-        targetSteer = angle * 2.5;
-        if (Math.abs(targetSteer) < 0.1) targetSteer = 0;
-        targetSteer = Math.max(-1.5, Math.min(1.5, targetSteer));
+                    this.gas = true;
+                }
 
-        this.gas = true;
-    }
+                // UMA MÃO → Modo Turbo (Nintendo Wii Style)
+                else if (hands === 1) {
+                    this.gas = true; // continua acelerando
+                    // steering NÃO muda (congela)
+                    
+                    // Lógica de Ativação do Turbo (Correção Absoluta)
+                    const activeHand = lwOk ? lw : rw;
+                    // Mão acima de 30% da altura da tela (y cresce para baixo, então < 0.3)
+                    const isHandUp = activeHand.y < (h * 0.3);
+                    
+                    if (isHandUp && this.nitro > 0 && this.speed > CONF.MAX_SPEED * 0.6) {
+                        this.isTurboActive = true;
+                    }
+                }
 
-    // UMA MÃO → mantém direção + permite ação (nitro no futuro)
-    else if (hands === 1) {
-        this.gas = true; // continua acelerando
-        // steering NÃO muda
-    }
+                // ZERO MÃOS → desaceleração natural
+                else {
+                    this.gas = false;
+                }
+            }
 
-    // ZERO MÃOS → desaceleração natural
-    else {
-        this.gas = false;
-    }
-}
-
-// Suavização do volante (Inércia)
-this.steer = this.steer + (targetSteer - this.steer) * 0.1;
+            // Suavização do volante (Inércia)
+            this.steer = this.steer + (targetSteer - this.steer) * 0.1;
 
             // 2. FÍSICA DO CARRO
-            const maxSpeed = (Math.abs(this.playerX) > 1.2) ? CONF.MAX_SPEED/4 : CONF.MAX_SPEED; // Grama = Lento
-            const accel = (this.gas) ? CONF.ACCEL : CONF.DECEL;
+            // Gerenciamento de Nitro
+            if (this.isTurboActive) {
+                this.nitro = Math.max(0, this.nitro - CONF.NITRO_DRAIN);
+                if (this.nitro <= 0) this.isTurboActive = false;
+                if (this.time % 3 === 0) window.Gfx.shake(2); // Feedback tátil visual
+            } else {
+                this.nitro = Math.min(CONF.NITRO_MAX, this.nitro + CONF.NITRO_RECHARGE);
+            }
+
+            // Definição de limites dinâmicos
+            let currentMaxSpeed = CONF.MAX_SPEED;
+            let currentAccel = CONF.ACCEL;
+
+            if (this.isTurboActive) {
+                currentMaxSpeed = CONF.TURBO_MAX_SPEED;
+                currentAccel = CONF.ACCEL * CONF.TURBO_BOOST;
+            }
+
+            if (Math.abs(this.playerX) > 1.2) {
+                currentMaxSpeed = CONF.MAX_SPEED / 4; // Grama = Lento
+            }
+
+            const accel = (this.gas) ? currentAccel : CONF.DECEL;
             
-            this.speed = Math.max(0, Math.min(this.speed + accel, maxSpeed));
+            this.speed = Math.max(0, Math.min(this.speed + accel, currentMaxSpeed));
             
             // Movimento Lateral (Derrapagem + Força Centrífuga)
             const segIdx = Math.floor(this.position / CONF.SEGMENT_LENGTH) % this.segments.length;
@@ -435,6 +480,15 @@ this.steer = this.steer + (targetSteer - this.steer) * 0.1;
             ctx.translate(x, y);
             ctx.scale(s*800, s*800); // Normaliza tamanho
 
+            // Efeito de Turbo (Fogo)
+            if (this.isTurboActive) {
+                const fireY = -25;
+                const fireSize = 10 + Math.random()*5;
+                ctx.fillStyle = Math.random() > 0.5 ? '#FF4500' : '#FFFF00';
+                ctx.beginPath(); ctx.arc(-20, fireY, fireSize, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(20, fireY, fireSize, 0, Math.PI*2); ctx.fill();
+            }
+
             // Sombra
             ctx.fillStyle = 'rgba(0,0,0,0.4)';
             ctx.beginPath(); ctx.ellipse(0, -5, 60, 15, 0, 0, Math.PI*2); ctx.fill();
@@ -563,17 +617,41 @@ this.steer = this.steer + (targetSteer - this.steer) * 0.1;
         drawHUD: function(ctx, w, h) {
             const speedKmh = Math.floor(this.speed / 60);
             
+            // Velocidade
             ctx.font = "bold 40px 'Russo One'";
             ctx.textAlign = "right";
-            ctx.fillStyle = "#fff";
+            ctx.fillStyle = this.isTurboActive ? "#FFD700" : "#fff";
             ctx.strokeStyle = "#000";
             ctx.lineWidth = 3;
             ctx.strokeText(speedKmh + " km/h", w-20, h-20);
             ctx.fillText(speedKmh + " km/h", w-20, h-20);
             
+            // Voltas
             ctx.textAlign = "left";
             ctx.strokeText("LAP " + this.lap + "/3", 20, 50);
             ctx.fillText("LAP " + this.lap + "/3", 20, 50);
+
+            // Barra de Nitro (Discreta)
+            const nitroW = 150;
+            const nitroH = 10;
+            const nitroX = w - 20 - nitroW;
+            const nitroY = h - 60;
+            
+            // Background da barra
+            ctx.fillStyle = "rgba(0,0,0,0.5)";
+            ctx.fillRect(nitroX, nitroY, nitroW, nitroH);
+            
+            // Fill da barra
+            const fillPct = this.nitro / CONF.NITRO_MAX;
+            const barColor = this.isTurboActive ? "#FF4500" : "#00BFFF";
+            ctx.fillStyle = barColor;
+            ctx.fillRect(nitroX, nitroY, nitroW * fillPct, nitroH);
+            
+            // Label Turbo
+            ctx.font = "bold 12px Arial";
+            ctx.fillStyle = "#fff";
+            ctx.textAlign = "right";
+            ctx.fillText("NITRO", nitroX - 5, nitroY + 9);
         }
     };
 
