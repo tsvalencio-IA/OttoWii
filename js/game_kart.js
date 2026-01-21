@@ -178,31 +178,47 @@
             this.time++;
             
             // 1. INPUT (Pose Detection)
-            let targetSteer = 0;
-            if(pose) {
-                const lw = pose.keypoints.find(k=>k.name==='left_wrist');
-                const rw = pose.keypoints.find(k=>k.name==='right_wrist');
-                
-                if(lw && lw.score > 0.4 && rw && rw.score > 0.4) {
-                    const dx = rw.x - lw.x;
-                    const dy = rw.y - lw.y;
-                    const angle = Math.atan2(dy, dx);
-                    
-                    // Desenha HUD Volante
-                    this.drawWheelUI(ctx, w, h, angle);
-                    
-                    // Lógica de Volante
-                    targetSteer = angle * 2.5; 
-                    if(Math.abs(targetSteer) < 0.1) targetSteer = 0; // Deadzone
-                    targetSteer = Math.max(-1.5, Math.min(1.5, targetSteer));
-                    this.gas = true; 
-                } else {
-                    this.gas = false;
-                }
-            }
-            
-            // Suavização do volante (Inércia)
-            this.steer = this.steer + (targetSteer - this.steer) * 0.1;
+let targetSteer = this.steer; // mantém último ângulo por padrão
+let hands = 0;
+
+if (pose) {
+    const lw = pose.keypoints.find(k=>k.name==='left_wrist');
+    const rw = pose.keypoints.find(k=>k.name==='right_wrist');
+
+    const lwOk = lw && lw.score > 0.4;
+    const rwOk = rw && rw.score > 0.4;
+
+    hands = (lwOk ? 1 : 0) + (rwOk ? 1 : 0);
+
+    // DUAS MÃOS → volante completo
+    if (hands === 2) {
+        const dx = rw.x - lw.x;
+        const dy = rw.y - lw.y;
+        const angle = Math.atan2(dy, dx);
+
+        this.drawWheelUI(ctx, w, h, angle);
+
+        targetSteer = angle * 2.5;
+        if (Math.abs(targetSteer) < 0.1) targetSteer = 0;
+        targetSteer = Math.max(-1.5, Math.min(1.5, targetSteer));
+
+        this.gas = true;
+    }
+
+    // UMA MÃO → mantém direção + permite ação (nitro no futuro)
+    else if (hands === 1) {
+        this.gas = true; // continua acelerando
+        // steering NÃO muda
+    }
+
+    // ZERO MÃOS → desaceleração natural
+    else {
+        this.gas = false;
+    }
+}
+
+// Suavização do volante (Inércia)
+this.steer = this.steer + (targetSteer - this.steer) * 0.1;
 
             // 2. FÍSICA DO CARRO
             const maxSpeed = (Math.abs(this.playerX) > 1.2) ? CONF.MAX_SPEED/4 : CONF.MAX_SPEED; // Grama = Lento
