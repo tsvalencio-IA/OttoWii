@@ -286,7 +286,7 @@
                 this.position -= this.trackLength;
                 this.lap++;
                 window.Sfx.play(800, 'square', 0.2, 0.1); // Som de volta
-                if(this.lap > CONF.totalLaps) window.System.gameOver("FIM DA CORRIDA!");
+                if(this.lap > this.totalLaps) window.System.gameOver("FIM DA CORRIDA!");
             }
 
             // 3. IA DOS OPONENTES
