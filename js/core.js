@@ -1,5 +1,5 @@
 /* =================================================================
-   CORE DO SISTEMA (CÉREBRO) - VERSÃO MULTIPLAYER ESTÁVEL
+   CORE DO SISTEMA (CÉREBRO) - VERSÃO CORRIGIDA (MAPA DE PIXELS)
    ================================================================= */
 
 // 1. AUDIO GLOBAL
@@ -28,7 +28,7 @@ window.Sfx = {
     skid: () => window.Sfx.play(150, 'square', 0.1, 0.05)
 };
 
-// 2. SISTEMA GRÁFICO
+// 2. SISTEMA GRÁFICO (CORRIGIDO PARA MOVENET PADRÃO 640x480)
 window.Gfx = {
     shake: 0,
     updateShake: (ctx) => {
@@ -39,8 +39,15 @@ window.Gfx = {
         }
     },
     shakeScreen: (i) => { window.Gfx.shake = i; },
-    map: (pt, w, h) => ({ x: (1 - pt.x) * w, y: pt.y * h }),
-    drawSkeleton: (ctx, pose, w, h) => { /* Opcional: Debug visual do esqueleto */ }
+    
+    // --- AQUI ESTAVA O ERRO! CORRIGIDO PARA LÓGICA DO THIAGO.ZIP ---
+    // MoveNet retorna pixels (0-640). Precisamos normalizar baseados nisso.
+    map: (pt, w, h) => ({ 
+        x: w - (pt.x / 640 * w), // Inverte X (Espelho) e escala para a tela
+        y: (pt.y / 480 * h)      // Escala Y para a tela
+    }),
+    
+    drawSkeleton: (ctx, pose, w, h) => { /* Opcional */ }
 };
 
 // 3. SISTEMA PRINCIPAL
@@ -53,25 +60,22 @@ window.System = {
         console.log("Iniciando System Wii...");
         const loadingText = document.getElementById('loading-text');
 
-        // Gestão de Identidade do Jogador (Persistente)
         let savedId = localStorage.getItem('wii_player_id');
         if (!savedId) {
             savedId = 'Player_' + Math.floor(Math.random() * 9999);
             localStorage.setItem('wii_player_id', savedId);
         }
         window.System.playerId = savedId;
-        console.log("Identidade:", window.System.playerId);
 
-        // BLOCO CRÍTICO: Inicialização Protegida (Evita travamento infinito)
         try {
             window.System.canvas = document.getElementById('game-canvas');
             window.System.resize();
             window.addEventListener('resize', window.System.resize);
 
-            // 1. Câmera
             if (loadingText) loadingText.innerText = "LIGANDO CÂMERA...";
             window.System.video = document.getElementById('webcam');
             
+            // Força 640x480 para bater com a matemática do Gfx.map
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { width: 640, height: 480, frameRate: { ideal: 30 } } 
@@ -80,47 +84,37 @@ window.System = {
                 await new Promise(r => window.System.video.onloadedmetadata = r);
                 window.System.video.play();
             } catch(e) {
-                console.warn("Câmera falhou ou negada:", e);
-                if (loadingText) loadingText.innerText = "CÂMERA NÃO DETECTADA...";
-                // Não damos throw, permitimos o jogo carregar sem câmera
+                console.warn("Câmera falhou:", e);
+                if (loadingText) loadingText.innerText = "CÂMERA OFF - MODO TOQUE";
             }
 
-            // 2. IA (MoveNet) - Com Timeout para não travar
             if (typeof poseDetection !== 'undefined') {
                 if (loadingText) loadingText.innerText = "CARREGANDO INTELIGÊNCIA ARTIFICIAL...";
                 
-                // Promessa com timeout de 8 segundos
                 const modelPromise = poseDetection.createDetector(
                     poseDetection.SupportedModels.MoveNet, 
                     { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
                 );
                 
                 const timeoutPromise = new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Tempo limite da IA excedido')), 8000)
+                    setTimeout(() => reject(new Error('Timeout IA')), 8000)
                 );
 
                 try {
                     window.System.detector = await Promise.race([modelPromise, timeoutPromise]);
-                    console.log("IA Carregada com sucesso!");
+                    console.log("IA Pronta!");
                 } catch (err) {
-                    console.error("Falha ao carregar IA (Rede lenta ou erro):", err);
-                    if (loadingText) loadingText.innerText = "IA FALHOU. MODO TOQUE ATIVO.";
-                    await new Promise(r => setTimeout(r, 1000)); // Pequena pausa para ler a msg
+                    console.error("Falha IA:", err);
                 }
-            } else {
-                console.warn("Biblioteca TensorFlow/PoseDetection não carregada.");
             }
 
         } catch (globalErr) {
-            console.error("Erro fatal na inicialização:", globalErr);
-            alert("Erro ao iniciar sistema. O menu será carregado em modo de segurança.");
+            console.error("Erro fatal:", globalErr);
         } finally {
-            // SEMPRE executa isso, garantindo que o Loading suma
             const loadScreen = document.getElementById('loading');
             if (loadScreen) loadScreen.classList.add('hidden');
             window.System.menu();
             
-            // Ativa audio no primeiro clique global
             document.body.addEventListener('click', () => window.Sfx.init(), {once:true});
             document.body.addEventListener('touchstart', () => window.Sfx.init(), {once:true});
         }
@@ -168,7 +162,6 @@ window.System = {
         document.getElementById('menu-screen').classList.add('hidden');
         document.getElementById('game-ui').classList.remove('hidden');
         
-        // Só mostra a webcam se a câmera foi iniciada corretamente
         if (window.System.video && window.System.video.readyState >= 2) {
             document.getElementById('webcam').style.opacity = game.opts.camOpacity || 0.3;
         }
@@ -181,7 +174,6 @@ window.System = {
     loop: async () => {
         if(!window.System.activeGame) return;
 
-        // Garante que não existam múltiplos loops rodando simultaneamente
         if (window.System.loopId) {
             cancelAnimationFrame(window.System.loopId);
             window.System.loopId = null;
@@ -192,12 +184,11 @@ window.System = {
         const h = window.System.canvas.height;
 
         let pose = null;
-        // Só tenta detectar se detector existe E video está pronto
         if (window.System.detector && window.System.video && window.System.video.readyState === 4) {
             try {
                 const p = await window.System.detector.estimatePoses(window.System.video, {flipHorizontal: false});
                 if(p.length > 0) pose = p[0];
-            } catch(e) { /* Ignora frames ruins silenciosamente */ }
+            } catch(e) { }
         }
 
         ctx.save();
