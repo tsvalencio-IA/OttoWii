@@ -1,5 +1,5 @@
 // =============================================================================
-// KART DO OTTO – VERSÃO FINAL (CORREÇÃO DE GFX SHAKE + VOLANTE FANTASMA)
+// KART DO OTTO – VERSÃO FINAL (MULTIPLAYER + FÍSICA THIAGO.ZIP)
 // =============================================================================
 
 (function() {
@@ -25,13 +25,13 @@
         ACCEL: 1.5,
         FRICTION: 0.985,
         OFFROAD_DECEL: 0.93,
-        CENTRIFUGAL_FORCE: 0.19,
+        CENTRIFUGAL_FORCE: 0.19, // Lógica original
         STEER_AUTHORITY: 0.18,
         GRIP_DRIFT: 0.94,
         CRASH_PENALTY: 0.55,
         DEADZONE: 0.05,
         INPUT_SMOOTHING: 0.22,
-        TURBO_ZONE_Y: 0.35, 
+        TURBO_ZONE_Y: 0.35,      // Altura para ativar turbo (Mãos para cima)
         DRAW_DISTANCE: 60
     };
 
@@ -51,7 +51,6 @@
 
     function getSegment(index) {
         if (!segments || segments.length === 0) return DUMMY_SEG;
-        // Matematica segura para pegar segmento sem erro
         return segments[((Math.floor(index) % segments.length) + segments.length) % segments.length] || DUMMY_SEG;
     }
 
@@ -81,14 +80,22 @@
         lastSync: 0,
         autoStartTimer: null,
 
+        // Física
         speed: 0, pos: 0, playerX: 0, steer: 0, targetSteer: 0,
         nitro: 100, turboLock: false,
         driftState: 0, driftDir: 0, driftCharge: 0, mtStage: 0, boostTimer: 0,    
         
+        // Corrida
         lap: 1, totalLaps: 3, time: 0, rank: 1, score: 0, finishTimer: 0,
         
+        // Visual
         visualTilt: 0, bounce: 0, skyColor: 0, 
-        inputState: 0, gestureTimer: 0,
+        
+        // INPUT HANDS (RESTAURADO)
+        inputState: 0, 
+        gestureTimer: 0,
+        handLeft: null, 
+        handRight: null,
         
         virtualWheel: { x:0, y:0, r:0, opacity:0 },
         rivals: [],
@@ -124,22 +131,17 @@
                 borderRadius: '50%', background: 'radial-gradient(#ffaa00, #cc5500)', border: '4px solid #fff',
                 color: '#fff', display: 'none', alignItems: 'center', justifyContent: 'center',
                 fontFamily: "sans-serif", fontWeight: "bold", fontSize: '16px', zIndex: '100',
-                boxShadow: '0 0 20px rgba(255, 100, 0, 0.5)', cursor: 'pointer', userSelect: 'none'
+                boxShadow: '0 0 20px rgba(255, 100, 0, 0.5)', cursor: 'pointer', userSelect: 'none',
+                transition: 'opacity 0.3s'
             });
 
-            // Eventos de toque com preventDefault para evitar conflitos no mobile
             const toggleTurbo = (e) => {
-                if(e) { 
-                    if(e.cancelable) e.preventDefault(); 
-                    e.stopPropagation(); 
-                }
+                if(e) { if(e.cancelable) e.preventDefault(); e.stopPropagation(); }
                 if(this.state !== 'RACE') return;
                 
                 if(this.nitro > 5) {
                     this.turboLock = !this.turboLock;
-                    nitroBtn.style.transform = this.turboLock ? 'scale(0.95)' : 'scale(1)';
-                    nitroBtn.style.filter = this.turboLock ? 'brightness(1.5)' : 'brightness(1)';
-                    if(this.turboLock) window.Sfx.play(600, 'square', 0.1, 0.1);
+                    this.updateNitroVisuals();
                 }
             };
             
@@ -147,7 +149,7 @@
             nitroBtn.addEventListener('mousedown', toggleTurbo);
             document.getElementById('game-ui').appendChild(nitroBtn);
 
-            // Controle de Menus
+            // Controle de Menus (Clique/Toque na tela)
             window.System.canvas.onclick = (e) => {
                 const rect = window.System.canvas.getBoundingClientRect();
                 const y = e.clientY - rect.top;
@@ -173,6 +175,14 @@
                     }
                 }
             };
+        },
+
+        updateNitroVisuals: function() {
+            if(nitroBtn) {
+                nitroBtn.style.transform = this.turboLock ? 'scale(0.95)' : 'scale(1)';
+                nitroBtn.style.filter = this.turboLock ? 'brightness(1.5)' : 'brightness(1)';
+                if(this.turboLock) window.Sfx.play(600, 'square', 0.1, 0.1);
+            }
         },
 
         resetPhysics: function() {
@@ -207,7 +217,7 @@
             addRoad(40, 1.2, 0);
 
             trackLength = segments.length * SEGMENT_LENGTH;
-            if(trackLength === 0) trackLength = 2000; // Segurança
+            if(trackLength === 0) trackLength = 2000;
             buildMiniMap(segments);
         },
 
@@ -239,14 +249,8 @@
             if (this.dbRef) this.dbRef.child('players').off(); 
 
             this.dbRef = window.DB.ref('rooms/' + this.roomId);
-            
             const myRef = this.dbRef.child('players/' + window.System.playerId);
-            myRef.set({
-                name: 'Player',
-                charId: 0,
-                ready: false,
-                lastSeen: firebase.database.ServerValue.TIMESTAMP
-            });
+            myRef.set({ name: 'Player', charId: 0, ready: false, lastSeen: firebase.database.ServerValue.TIMESTAMP });
             myRef.onDisconnect().remove();
 
             this.dbRef.child('players').on('value', (snap) => {
@@ -258,10 +262,7 @@
                     .filter(id => id !== window.System.playerId)
                     .filter(id => (now - (data[id].lastSeen || 0)) < 15000)
                     .map(id => ({
-                        id: id,
-                        ...data[id],
-                        isRemote: true,
-                        speed: 0,
+                        id: id, ...data[id], isRemote: true, speed: 0,
                         color: CHARACTERS[data[id].charId || 0].color
                     }));
                 
@@ -290,31 +291,20 @@
 
         toggleReady: function() {
             if (this.state !== 'LOBBY') return;
-            
-            if (!this.isOnline) {
-                this.startRace(this.selectedTrack);
-                return;
-            }
+            if (!this.isOnline) { this.startRace(this.selectedTrack); return; }
 
             this.isReady = !this.isReady;
             window.Sfx.click();
             
-            if (this.isReady) {
-                this.state = 'WAITING';
-                window.System.msg("AGUARDANDO...");
-            } else {
-                this.state = 'LOBBY';
-                this.autoStartTimer = null;
-            }
+            if (this.isReady) { this.state = 'WAITING'; window.System.msg("AGUARDANDO..."); } 
+            else { this.state = 'LOBBY'; this.autoStartTimer = null; }
             this.syncLobby();
         },
 
         syncLobby: function() {
             if (this.dbRef) {
                 this.dbRef.child('players/' + window.System.playerId).update({
-                    charId: this.selectedChar,
-                    trackId: this.selectedTrack,
-                    ready: this.isReady,
+                    charId: this.selectedChar, trackId: this.selectedTrack, ready: this.isReady,
                     lastSeen: firebase.database.ServerValue.TIMESTAMP
                 });
             }
@@ -334,24 +324,21 @@
         // UPDATE LOOP
         // -------------------------------------------------------------
         update: function(ctx, w, h, pose) {
-            // Bloco de segurança total para evitar Crash do Navegador
             try {
                 if (this.state === 'MODE_SELECT') { this.renderModeSelect(ctx, w, h); return; }
                 if (this.state === 'LOBBY' || this.state === 'WAITING') { this.renderLobby(ctx, w, h); return; }
 
                 if (!segments || segments.length === 0) return 0;
                 
+                // >>> MÁGICA: FÍSICA E INPUTS <<<
                 this.updatePhysics(w, h, pose);
                 this.renderWorld(ctx, w, h);
                 this.renderUI(ctx, w, h);
                 
-                if (this.isOnline) {
-                    try { this.syncMultiplayer(); } catch(e) {}
-                }
+                if (this.isOnline) { try { this.syncMultiplayer(); } catch(e) {} }
                 
                 return Math.floor(this.score);
             } catch (err) {
-                // Se der erro, reseta a física mas NÃO trava o navegador
                 console.error("Erro recuperado:", err);
                 this.speed = 0;
                 return 0;
@@ -362,27 +349,25 @@
             if (Date.now() - this.lastSync > 80) {
                 this.lastSync = Date.now();
                 this.dbRef.child('players/' + window.System.playerId).update({
-                    pos: Math.floor(this.pos),
-                    x: this.playerX,
-                    lap: this.lap,
+                    pos: Math.floor(this.pos), x: this.playerX, lap: this.lap,
                     lastSeen: firebase.database.ServerValue.TIMESTAMP
                 });
             }
         },
 
         // -------------------------------------------------------------
-        // FÍSICA E DETECÇÃO (BLINDADA)
+        // FÍSICA E DETECÇÃO (LÓGICA ORIGINAL)
         // -------------------------------------------------------------
         updatePhysics: function(w, h, pose) {
             const d = Logic;
             const charStats = CHARACTERS[this.selectedChar];
 
-            // 1. LIMPEZA DE VALORES INVÁLIDOS (NaN Fix)
+            // Limpeza
             if (!Number.isFinite(d.speed)) d.speed = 0;
             if (!Number.isFinite(d.pos)) d.pos = 0;
             if (!Number.isFinite(d.playerX)) d.playerX = 0;
             
-            // 2. DETECÇÃO DE MOVIMENTO (Pose)
+            // --- DETECÇÃO DE MOVIMENTO (USANDO GFX.MAP CORRIGIDO NO CORE) ---
             let detected = 0;
             let pLeft = null, pRight = null;
 
@@ -390,42 +375,58 @@
                 const lw = pose.keypoints.find(k => k.name === 'left_wrist');
                 const rw = pose.keypoints.find(k => k.name === 'right_wrist');
                 
-                if (lw && lw.score > 0.15) { pLeft = window.Gfx.map(lw, w, h); detected++; }
-                if (rw && rw.score > 0.15) { pRight = window.Gfx.map(rw, w, h); detected++; }
-                
+                // Mapeia coordenadas reais da câmera para a tela
+                if (lw && lw.score > 0.3) { pLeft = window.Gfx.map(lw, w, h); detected++; }
+                if (rw && rw.score > 0.3) { pRight = window.Gfx.map(rw, w, h); detected++; }
+
+                d.handLeft = pLeft;
+                d.handRight = pRight;
+
+                // TURBO: Média da altura das mãos
                 if (detected >= 1) {
                     let avgY = (detected === 2) ? (pLeft.y + pRight.y) / 2 : (pLeft ? pLeft.y : pRight.y);
+                    
+                    // Se as mãos estiverem na zona superior
                     if (avgY < h * CONF.TURBO_ZONE_Y) {
                         d.gestureTimer++;
-                        if (d.gestureTimer === 15 && d.nitro > 5) {
+                        if (d.gestureTimer === 12 && d.nitro > 5) {
                             d.turboLock = !d.turboLock; 
-                            window.System.msg(d.turboLock ? "TURBO MAX!" : "TURBO OFF");
+                            this.updateNitroVisuals();
+                            window.System.msg(d.turboLock ? "TURBO LIGADO!" : "TURBO DESLIGADO");
                         }
-                    } else { d.gestureTimer = 0; }
+                    } else { 
+                        d.gestureTimer = 0; 
+                    }
+                    
+                    if(nitroBtn) nitroBtn.style.opacity = '0.3'; // Oculta botão se usar gestos
+                } else {
+                    if(nitroBtn) nitroBtn.style.opacity = '1.0';
                 }
             }
 
-            // VOLANTE VIRTUAL (MODIFICADO: AGORA APARECE FANTASMA)
+            // VOLANTE: Ângulo entre pulsos
             if (detected === 2) {
                 d.inputState = 2;
-                const dx = pRight.x - pLeft.x; 
+                const dx = pRight.x - pLeft.x;
                 const dy = pRight.y - pLeft.y;
+                
+                // Calcula ângulo
                 const rawAngle = Math.atan2(dy, dx);
                 
-                d.targetSteer = (Math.abs(rawAngle) > CONF.DEADZONE) ? rawAngle * 2.5 : 0;
+                // Aplica direção
+                d.targetSteer = (Math.abs(rawAngle) > CONF.DEADZONE) ? rawAngle * 2.3 : 0;
                 
-                d.virtualWheel.x = (pLeft.x + pRight.x) / 2; 
+                // Visual do volante
+                d.virtualWheel.x = (pLeft.x + pRight.x) / 2;
                 d.virtualWheel.y = (pLeft.y + pRight.y) / 2;
-                d.virtualWheel.r = Math.max(40, Math.hypot(dx, dy) / 2);
+                d.virtualWheel.r = Math.hypot(dx, dy) / 2;
                 d.virtualWheel.opacity = 1.0; 
             } else {
-                d.inputState = 0; 
-                d.targetSteer = 0; 
+                // Modo Fantasma (Sem mãos)
+                d.inputState = 0;
+                d.targetSteer = 0;
                 
-                // MODO FANTASMA: Se não detectar mãos, centraliza e fica transparente
-                // Em vez de opacity = 0, mantemos em 0.3 para você ver o volante
                 if (d.virtualWheel.x === 0) { d.virtualWheel.x = w/2; d.virtualWheel.y = h*0.75; }
-                
                 d.virtualWheel.x += ((w / 2) - d.virtualWheel.x) * 0.1;
                 d.virtualWheel.y += ((h * 0.75) - d.virtualWheel.y) * 0.1;
                 d.virtualWheel.r += (60 - d.virtualWheel.r) * 0.1;
@@ -435,12 +436,17 @@
             d.steer += (d.targetSteer - d.steer) * CONF.INPUT_SMOOTHING;
             d.steer = Math.max(-1.5, Math.min(1.5, d.steer));
 
-            // CÁLCULO DE VELOCIDADE
+            // --- FÍSICA DO CARRO ---
             let currentMax = CONF.MAX_SPEED * charStats.speedInfo;
+            
             if (d.turboLock && d.nitro > 0) {
-                currentMax = CONF.TURBO_MAX_SPEED; d.nitro -= 0.6;
-                if(d.nitro <= 0) { d.nitro = 0; d.turboLock = false; }
-            } else { d.turboLock = false; d.nitro = Math.min(100, d.nitro + 0.15); }
+                currentMax = CONF.TURBO_MAX_SPEED; 
+                d.nitro -= 0.6;
+                if(d.nitro <= 0) { d.nitro = 0; d.turboLock = false; this.updateNitroVisuals(); }
+            } else { 
+                d.turboLock = false; 
+                d.nitro = Math.min(100, d.nitro + 0.15); 
+            }
             
             if(d.boostTimer > 0) { currentMax += 80; d.boostTimer--; }
 
@@ -450,10 +456,6 @@
 
             if (Math.abs(d.playerX) > 2.2) d.speed *= CONF.OFFROAD_DECEL;
             
-            // Segurança extra para velocidade
-            if (!Number.isFinite(d.speed)) d.speed = 0;
-
-            // FÍSICA NA PISTA
             const segIdx = Math.floor(d.pos / SEGMENT_LENGTH);
             const seg = getSegment(segIdx);
             const speedRatio = d.speed / CONF.MAX_SPEED;
@@ -468,7 +470,7 @@
             if(d.playerX < -4.5) { d.playerX = -4.5; d.speed *= 0.95; }
             if(d.playerX > 4.5)  { d.playerX = 4.5;  d.speed *= 0.95; }
 
-            // Drift Logic
+            // Drift
             if (d.driftState === 0) {
                 if (Math.abs(d.steer) > 1.0 && speedRatio > 0.6) {
                     d.driftState = 1; d.driftDir = Math.sign(d.steer); d.driftCharge = 0; d.bounce = -8; window.Sfx.skid();
@@ -487,20 +489,18 @@
                 }
             }
 
-            // Colisão - CORRIGIDO O ERRO DE SHAKE
+            // Colisões
             seg.obs.forEach(o => {
                 if(o.x < 10 && Math.abs(d.playerX - o.x) < 0.35 && Math.abs(d.playerX) < 4.0) {
                     d.speed *= CONF.CRASH_PENALTY; o.x = 999;
                     d.bounce = -15; 
                     window.Sfx.crash(); 
-                    window.Gfx.shakeScreen(15); // CORREÇÃO AQUI
+                    window.Gfx.shakeScreen(15);
                 }
             });
 
-            // --- CORREÇÃO FINAL DO TRAVAMENTO ---
+            // Loop Pista
             d.pos += d.speed;
-
-            // Se a posição for maior que a pista, volta para o começo (Safe Mode)
             if (d.pos >= trackLength) {
                 d.pos -= trackLength;
                 d.lap++;
@@ -514,13 +514,9 @@
                     window.System.msg(d.rank === 1 ? "VITÓRIA!" : "FIM!"); 
                 }
             }
-            
-            // Se a posição for negativa, volta para o fim (Safe Mode)
-            if (d.pos < 0) {
-                d.pos += trackLength;
-            }
+            if (d.pos < 0) d.pos += trackLength;
 
-            // --- IA DOS RIVAIS ---
+            // Rivais
             let pAhead = 0;
             d.rivals.forEach(r => {
                 if (!r.isRemote) {
@@ -530,8 +526,6 @@
                     if(dist > 1200) targetS *= 0.82; if(dist < -1200) targetS *= 1.05;
                     r.speed += (targetS - r.speed) * (r.aggro || 0.03);
                     r.pos += r.speed;
-                    
-                    // IA Loop Logic (Safe)
                     if(r.pos >= trackLength) { r.pos -= trackLength; r.lap++; }
                     if(r.pos < 0) r.pos += trackLength;
 
@@ -547,11 +541,7 @@
 
             d.time++; d.score += d.speed * 0.01; d.bounce *= 0.8;
             
-            // CORREÇÃO DO SHAKE OFFROAD
-            if(Math.abs(d.playerX) > 2.2) { 
-                d.bounce = Math.sin(d.time)*5; 
-                window.Gfx.shakeScreen(2); // CORREÇÃO AQUI TAMBÉM
-            }
+            if(Math.abs(d.playerX) > 2.2) { d.bounce = Math.sin(d.time)*5; window.Gfx.shakeScreen(2); }
             d.visualTilt += (d.steer * 15 - d.visualTilt) * 0.1;
             
             if (d.state === 'FINISHED') {
@@ -803,11 +793,31 @@
                     ctx.restore();
                 }
 
-                // VOLANTE
+                // VOLANTE & MÃOS VISUAIS
                 if (d.virtualWheel.opacity > 0.01) {
                     const vw = d.virtualWheel; 
+                    
                     ctx.save(); 
-                    ctx.globalAlpha = vw.opacity; 
+                    ctx.globalAlpha = vw.opacity;
+                    
+                    // Desenha o "Link Holográfico" entre as mãos (Se detectadas)
+                    if (d.handLeft && d.handRight && d.inputState === 2) {
+                        ctx.beginPath();
+                        ctx.moveTo(d.handLeft.x, d.handLeft.y);
+                        ctx.lineTo(d.handRight.x, d.handRight.y);
+                        ctx.strokeStyle = 'rgba(0, 255, 255, 0.4)';
+                        ctx.lineWidth = 4;
+                        ctx.setLineDash([5, 5]);
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                        
+                        // Círculos nas mãos
+                        ctx.fillStyle = 'rgba(0, 255, 255, 0.6)';
+                        ctx.beginPath(); ctx.arc(d.handLeft.x, d.handLeft.y, 8, 0, Math.PI*2); ctx.fill();
+                        ctx.beginPath(); ctx.arc(d.handRight.x, d.handRight.y, 8, 0, Math.PI*2); ctx.fill();
+                    }
+
+                    // Volante no centro
                     ctx.translate(vw.x, vw.y);
                     
                     ctx.lineWidth = 8; ctx.strokeStyle = '#222'; ctx.beginPath(); ctx.arc(0, 0, vw.r, 0, Math.PI * 2); ctx.stroke();
