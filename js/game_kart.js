@@ -1,122 +1,116 @@
 // =============================================================================
-// KART DO OTTO – ULTIMATE PRO EDITION (V2.0)
-// ARQUITETURA: SENIOR GAME DEV
-// =============================================================================
-// CHANGELOG TÉCNICO:
-// 1. FÍSICA: Vetores de curva desacoplados (Input vs Força Centrífuga).
-// 2. RENDER: Viewport Rotation para colisões (Spin 360).
-// 3. GAME FEEL: FOV Dinâmico e Screen Shake baseado em superfície.
-// 4. UX: Hitbox de UI recalculado para viewport responsivo.
+// KART DO OTTO – ULTIMATE V15 (RESTAURAÇÃO TOTAL + FÍSICA PRO + UI FIX)
 // =============================================================================
 
 (function() {
 
     // -----------------------------------------------------------------
-    // 1. DADOS, CONSTANTES E TUNING
+    // 1. DADOS E CONFIGURAÇÕES (ORIGINAIS MANTIDOS)
     // -----------------------------------------------------------------
     const CHARACTERS = [
-        { id: 0, name: 'OTTO',    color: '#e74c3c', speedInfo: 1.0, turnInfo: 1.0,  accel: 1.0 },
-        { id: 1, name: 'THIAGO',  color: '#f1c40f', speedInfo: 1.1, turnInfo: 0.85, accel: 0.9 }, // Rápido, ruim de curva
-        { id: 2, name: 'THAMIS',  color: '#3498db', speedInfo: 0.9, turnInfo: 1.2,  accel: 1.15 } // Ágil, top speed menor
+        { id: 0, name: 'OTTO', color: '#e74c3c', speedInfo: 1.0, turnInfo: 1.0 },
+        { id: 1, name: 'Thiago', color: '#f1c40f', speedInfo: 1.08, turnInfo: 0.85 },
+        { id: 2, name: 'Thamis', color: '#3498db', speedInfo: 0.92, turnInfo: 1.15 }
     ];
 
     const TRACKS = [
-        { id: 0, name: 'GP CIRCUITO', theme: 'grass', sky: 0, curveMult: 1.0, friction: 1.0 },
-        { id: 1, name: 'DESERTO SECO', theme: 'sand', sky: 1, curveMult: 0.9, friction: 0.9 }, // Escorrega um pouco
-        { id: 2, name: 'PICO NEVADO', theme: 'snow', sky: 2, curveMult: 1.4, friction: 0.75 } // Muito drift
+        { id: 0, name: 'GP CIRCUITO', theme: 'grass', sky: 0, curveMult: 1.0 },
+        { id: 1, name: 'DESERTO SECO', theme: 'sand', sky: 1, curveMult: 0.8 },
+        { id: 2, name: 'PICO NEVADO', theme: 'snow', sky: 2, curveMult: 1.3 }
     ];
 
-    // TUNING FINO DE FÍSICA ARCADE
     const CONF = {
-        MAX_SPEED: 220,
-        TURBO_MAX_SPEED: 340,
-        ACCEL_RATE: 0.15,
-        BREAK_RATE: 0.3,
-        DECEL_RATE: 0.05,        // Resistência do ar natural
-        OFFROAD_DECEL: 0.92,     // Penalidade fora da pista
-        OFFROAD_LIMIT: 2.3,      // Limite X onde começa o off-road
-        
-        // FÍSICA DE CURVA
-        CENTRIFUGAL: 0.45,       // Força que joga o carro pra fora da curva
-        STEER_SPEED: 0.18,       // Velocidade de resposta do volante
-        GRIP_LOSS_SPEED: 180,    // Velocidade onde começa a perder aderência
+        SPEED: 120,
+        MAX_SPEED: 200,
+        TURBO_MAX_SPEED: 280,
+        FRICTION: 0.96,        // Aumentei levemente o atrito para "sentir" o chão
+        OFFROAD_DECEL: 0.94,
+        CENTRIFUGAL_FORCE: 0.35, // Aumentei para punir quem não faz a curva
 
-        // VISUAL
+        CAMERA_DEPTH: 0.84,
+        CAMERA_HEIGHT: 1000,
+        ROAD_WIDTH: 2000,
+        
         SEGMENT_LENGTH: 200,
-        DRAW_DISTANCE: 180,      // Aumentado para ver mais longe
-        FOV_BASE: 100,
+        DRAW_DISTANCE: 160,
         RUMBLE_LENGTH: 3
     };
 
-    // VARIÁVEIS DE ESTADO
+    // Ajustes de Gameplay (Sensação de impacto)
+    const GAME_TUNING = {
+        gripLoss: 0.82,
+        offroadPenalty: 0.85,
+        zebraInstability: 0.25, // Zebra treme mais
+        collisionForce: 1.5,    // Batida empurra mais
+        centrifugalBoost: 0.8   // Curva joga mais pra fora
+    };
+
+    let minimapPoints = [];
+    let particles = []; 
+    let nitroBtn = null;
+    let lapPopupTimer = 0;
+    let lapPopupText = "";
+    
     let segments = [];
     let trackLength = 0;
-    let particles = [];
-    let minimapPoints = [];
-    let nitroBtn = null;
 
-    // SISTEMA DE BOTÕES (UI)
-    let uiButtons = [];
+    const DUMMY_SEG = { curve: 0, y: 0, color: 'light', obs: [], theme: 'grass' };
 
+    function getSegment(index) {
+        if (!segments || segments.length === 0) return DUMMY_SEG;
+        return segments[((Math.floor(index) % segments.length) + segments.length) % segments.length] || DUMMY_SEG;
+    }
+
+    function buildMiniMap(segments) {
+        minimapPoints = [];
+        let x = 0; let y = 0; let dir = -Math.PI / 2;
+        segments.forEach(seg => {
+            dir += seg.curve * 0.002;
+            x += Math.cos(dir) * 4; y += Math.sin(dir) * 4;
+            minimapPoints.push({ x, y });
+        });
+    }
+
+    // -----------------------------------------------------------------
+    // 2. LÓGICA DO JOGO
+    // -----------------------------------------------------------------
     const Logic = {
-        state: 'MODE_SELECT', // MODE_SELECT, LOBBY, WAITING, RACE, FINISHED
+        state: 'MODE_SELECT',
         roomId: 'room_01',
         
-        // Jogador
         selectedChar: 0,
         selectedTrack: 0,
-        
-        // Física
-        speed: 0, 
-        pos: 0, 
-        playerX: 0, // -1 (esq) a 1 (dir), mas pode passar disso (offroad)
-        steer: 0, 
-        targetSteer: 0,
-        
-        // Estado de colisão/controle
-        spinAngle: 0,     // Ângulo visual da câmera (0 = normal)
-        spinTimer: 0,     // Tempo restante do spin
-        collisionTimer: 0,
-        screenShake: 0,
-        
-        // Gameplay
-        nitro: 100, 
-        turboLock: false,
-        lap: 1, 
-        totalLaps: 3, 
-        time: 0, 
-        rank: 1,
-        
-        // Skill System
-        combo: 0,
-        maxCombo: 0,
-        score: 0,
-
-        // Multiplayer
-        isOnline: false,
         isReady: false,
-        rivals: [],
+        isOnline: false,
+        
         dbRef: null,
         lastSync: 0,
         autoStartTimer: null,
 
-        // Input Virtual
-        virtualWheel: { x:0, y:0, r:60, opacity:0, isHigh: false },
-        inputMethod: 'NONE', // KEYBOARD, TOUCH, WEBCAM
+        speed: 0, pos: 0, playerX: 0, steer: 0, targetSteer: 0,
+        nitro: 100, turboLock: false,
+        driftState: 0, driftDir: 0, driftCharge: 0, mtStage: 0, boostTimer: 0,    
+        
+        lap: 1, totalLaps: 3, time: 0, rank: 1, score: 0, finishTimer: 0,
+        
+        visualTilt: 0, bounce: 0, skyColor: 0, 
+        inputState: 0, gestureTimer: 0,
+        
+        // Efeitos Visuais de Impacto
+        worldRotation: 0,  // Para o efeito de Spin 360
+        spinVelocity: 0,
+        shakeStrength: 0,
 
-        // =================================================================
-        // CICLO DE VIDA
-        // =================================================================
+        virtualWheel: { x:0, y:0, r:60, opacity:0, isHigh: false },
+        rivals: [], 
+
         init: function() { 
-            this.cleanup();
-            this.resetState();
-            this.setupUI(); // Configura botão HTML do Nitro
-            particles = [];
+            this.cleanup(); 
+            this.state = 'MODE_SELECT';
+            this.setupUI();
+            this.resetPhysics();
+            particles = []; 
             window.System.msg("SELECIONE O MODO");
-            
-            // Listener de Teclado (Fallback importante para testes/PC)
-            window.addEventListener('keydown', this.handleKeys.bind(this));
-            window.addEventListener('keyup', this.handleKeysUp.bind(this));
         },
 
         cleanup: function() {
@@ -125,61 +119,32 @@
             }
             if(nitroBtn) nitroBtn.remove();
             window.System.canvas.onclick = null;
-            // Remove listeners antigos se houver
-            window.removeEventListener('keydown', this.handleKeys);
-            window.removeEventListener('keyup', this.handleKeysUp);
         },
 
-        resetState: function() {
-            this.speed = 0; 
-            this.pos = 0; 
-            this.playerX = 0; 
-            this.steer = 0;
-            this.spinAngle = 0;
-            this.spinTimer = 0;
-            this.lap = 1;
-            this.score = 0;
-            this.combo = 0;
-            this.nitro = 100;
-            this.state = 'MODE_SELECT';
-            this.virtualWheel = { x:0, y:0, r:60, opacity:0, isHigh: false };
-        },
-
-        // =================================================================
-        // UI & INPUT (CORREÇÃO DE CLIQUES)
-        // =================================================================
         setupUI: function() {
-            // Remove botão antigo se existir
             const old = document.getElementById('nitro-btn-kart');
             if(old) old.remove();
 
-            // Cria botão DOM para Nitro (melhor que canvas para mobile)
             nitroBtn = document.createElement('div');
             nitroBtn.id = 'nitro-btn-kart';
             nitroBtn.innerHTML = "NITRO";
             Object.assign(nitroBtn.style, {
-                position: 'absolute', top: '40%', right: '20px', width: '90px', height: '90px',
-                borderRadius: '50%', background: 'radial-gradient(circle, #ffaa00, #ff4500)', 
-                border: '4px solid #fff', color: '#fff', display: 'none', 
-                alignItems: 'center', justifyContent: 'center',
-                fontFamily: "'Russo One', sans-serif", fontSize: '18px', zIndex: '100',
-                boxShadow: '0 0 25px rgba(255, 69, 0, 0.8)', cursor: 'pointer', userSelect: 'none',
-                transform: 'scale(1)', transition: 'transform 0.1s'
+                position: 'absolute', top: '35%', right: '20px', width: '85px', height: '85px',
+                borderRadius: '50%', background: 'radial-gradient(#ffaa00, #cc5500)', border: '4px solid #fff',
+                color: '#fff', display: 'none', alignItems: 'center', justifyContent: 'center',
+                fontFamily: "sans-serif", fontWeight: "bold", fontSize: '16px', zIndex: '100',
+                boxShadow: '0 0 20px rgba(255, 100, 0, 0.5)', cursor: 'pointer', userSelect: 'none'
             });
 
-            // Lógica de Ativação do Nitro
             const toggleTurbo = (e) => {
                 if(e) { if(e.cancelable) e.preventDefault(); e.stopPropagation(); }
                 if(this.state !== 'RACE') return;
                 
-                if(this.nitro > 10) {
+                if(this.nitro > 5) {
                     this.turboLock = !this.turboLock;
-                    nitroBtn.style.transform = this.turboLock ? 'scale(0.9)' : 'scale(1)';
+                    nitroBtn.style.transform = this.turboLock ? 'scale(0.95)' : 'scale(1)';
                     nitroBtn.style.filter = this.turboLock ? 'brightness(1.5)' : 'brightness(1)';
-                    if(this.turboLock) {
-                        window.Sfx.play(600, 'square', 0.1, 0.1);
-                        this.screenShake = 5; // Impacto visual ao ligar
-                    }
+                    if(this.turboLock) window.Sfx.play(600, 'square', 0.1, 0.1);
                 }
             };
             
@@ -187,783 +152,730 @@
             nitroBtn.addEventListener('mousedown', toggleTurbo);
             document.getElementById('game-ui').appendChild(nitroBtn);
 
-            // INPUT HANDLING DO CANVAS (Mouse/Touch nos menus)
+            // CORREÇÃO CRÍTICA DE INPUT UI: Usando getBoundingClientRect
             window.System.canvas.onclick = (e) => {
                 const rect = window.System.canvas.getBoundingClientRect();
                 
-                // Normaliza coordenadas (0 a 1) para independer da resolução
-                const clickX = (e.clientX - rect.left) / rect.width;
-                const clickY = (e.clientY - rect.top) / rect.height;
+                // Coordenadas relativas exatas
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                // Escala para resolução interna do canvas se necessário (aqui assumimos 1:1 visual)
+                const w = window.System.canvas.width;
+                const h = window.System.canvas.height;
 
-                this.checkUIButtons(clickX, clickY);
-            };
-        },
+                // Normaliza para porcentagem para facilitar detecção responsiva
+                const pX = mouseX / rect.width;
+                const pY = mouseY / rect.height;
 
-        // Helper para definir botões dinâmicos
-        registerButton: function(id, x, y, w, h, callback) {
-            // x,y,w,h são porcentagens (0.0 a 1.0)
-            uiButtons.push({ id, x, y, w, h, callback });
-        },
-
-        checkUIButtons: function(cx, cy) {
-            uiButtons.forEach(btn => {
-                // Checa colisão AABB simples
-                if (cx >= btn.x && cx <= btn.x + btn.w &&
-                    cy >= btn.y && cy <= btn.y + btn.h) {
+                if (this.state === 'MODE_SELECT') {
+                    if (pY < 0.5) this.selectMode('OFFLINE');
+                    else this.selectMode('ONLINE');
                     window.Sfx.click();
-                    btn.callback();
-                }
-            });
-        },
-
-        // Teclado (Debug/PC)
-        handleKeys: function(e) {
-            if(this.state !== 'RACE') return;
-            if(e.key === 'ArrowLeft') this.targetSteer = -1.5;
-            if(e.key === 'ArrowRight') this.targetSteer = 1.5;
-            if(e.key === 'ArrowUp') this.inputMethod = 'KEYBOARD_GAS';
-            if(e.key === ' ') { // Space para Nitro
-                if(this.nitro > 5) this.turboLock = true;
-            }
-        },
-        handleKeysUp: function(e) {
-            if(e.key === 'ArrowLeft' || e.key === 'ArrowRight') this.targetSteer = 0;
-            if(e.key === 'ArrowUp') this.inputMethod = 'NONE';
-            if(e.key === ' ') this.turboLock = false;
-        },
-
-        // =================================================================
-        // LÓGICA DE JOGO (UPDATE)
-        // =================================================================
-        update: function(ctx, w, h, pose) {
-            try {
-                // Limpa botões a cada frame para recriar conforme a tela
-                uiButtons = []; 
-
-                if (this.state === 'MODE_SELECT') { this.renderModeSelect(ctx, w, h); return; }
-                if (this.state === 'LOBBY' || this.state === 'WAITING') { this.renderLobby(ctx, w, h); return; }
-                
-                // RACE MODE
-                if (!segments || segments.length === 0) return 0;
-
-                this.updatePhysics(w, h, pose);
-                this.renderWorld(ctx, w, h);
-                this.renderHUD(ctx, w, h);
-                
-                if (this.isOnline) this.syncMultiplayer();
-                return Math.floor(this.score);
-
-            } catch (err) {
-                console.error("Critical Loop Error:", err);
-                return 0;
-            }
-        },
-
-        // =================================================================
-        // FÍSICA PRO (A MAGIA ACONTECE AQUI)
-        // =================================================================
-        updatePhysics: function(w, h, pose) {
-            const charStats = CHARACTERS[this.selectedChar];
-            const trackStats = TRACKS[this.selectedTrack];
-
-            // 1. INPUT (WebCam Priority)
-            let detected = false;
-            if (pose && pose.keypoints) {
-                const lw = pose.keypoints.find(k => k.name === 'left_wrist');
-                const rw = pose.keypoints.find(k => k.name === 'right_wrist');
-                
-                if (lw && rw && lw.score > 0.2 && rw.score > 0.2) {
-                    detected = true;
-                    // Mapeia coordenadas normalizadas
-                    const pLx = (1 - lw.x/640); // Mirror
-                    const pRx = (1 - rw.x/640); // Mirror
-                    
-                    // Centro do volante virtual
-                    const cx = (pLx + pRx) / 2;
-                    // Diferença Y determina giro
-                    const dy = (rw.y - lw.y) / 100; // Sensibilidade
-                    
-                    // Atualiza volante virtual
-                    this.virtualWheel.x = cx * w;
-                    this.virtualWheel.y = (lw.y + rw.y)/2 * (h/480);
-                    this.virtualWheel.opacity = 1.0;
-
-                    this.targetSteer = dy * 4.0; // Multiplicador de esterçamento
-                    this.inputMethod = 'WEBCAM';
-                }
-            }
-            
-            if (!detected) {
-                this.virtualWheel.opacity *= 0.9;
-                if(this.inputMethod !== 'KEYBOARD_GAS') this.targetSteer *= 0.5; // Auto-center se soltar
-            }
-
-            // Clamp Steer
-            this.targetSteer = Math.max(-1.5, Math.min(1.5, this.targetSteer));
-            // Smooth Steer (Inércia do volante)
-            this.steer += (this.targetSteer - this.steer) * CONF.STEER_SPEED;
-
-            // 2. ACELERAÇÃO E VELOCIDADE
-            let maxS = CONF.MAX_SPEED * charStats.speedInfo;
-            if (this.turboLock && this.nitro > 0) {
-                maxS = CONF.TURBO_MAX_SPEED;
-                this.nitro -= 0.5;
-                this.screenShake = 2; // Treme com nitro
-                if(this.nitro <= 0) this.turboLock = false;
-            } else {
-                this.nitro = Math.min(100, this.nitro + 0.05); // Regeneração lenta
-            }
-
-            // Gas
-            if (this.inputMethod !== 'NONE' || detected || this.turboLock) {
-                this.speed += (maxS - this.speed) * (CONF.ACCEL_RATE * charStats.accel);
-            } else {
-                this.speed -= CONF.DECEL_RATE * 2; // Freio motor
-            }
-            
-            // OFFROAD (Punição real)
-            if (Math.abs(this.playerX) > CONF.OFFROAD_LIMIT) {
-                this.speed *= CONF.OFFROAD_DECEL; // Perde velocidade exponencialmente
-                this.screenShake = Math.max(this.screenShake, (this.speed/50)); // Trepidação
-                this.combo = 0; // Perde combo
-            }
-
-            this.speed = Math.max(0, Math.min(this.speed, maxS + 50)); // Clamp final
-
-            // 3. CURVAS E FORÇA CENTRÍFUGA (O SEGREDO DO GAMEPLAY)
-            const segIdx = Math.floor(this.pos / CONF.SEGMENT_LENGTH);
-            const seg = segments[segIdx % segments.length] || { curve: 0 };
-            const curvePower = seg.curve * trackStats.curveMult;
-
-            // Fator Velocidade (quanto mais rápido, mais difícil virar e mais a curva te joga)
-            const speedRatio = this.speed / CONF.MAX_SPEED;
-            
-            // APLICAÇÃO DE FORÇAS
-            // a) O jogador vira o carro
-            this.playerX += this.steer * (speedRatio * 1.5) * charStats.turnInfo;
-            
-            // b) A pista "joga" o carro para fora (Força Centrífuga)
-            // Se a curva é para direita (positiva), a força joga para esquerda (negativa) relativa à pista visual
-            const centrifugal = curvePower * (speedRatio * speedRatio) * CONF.CENTRIFUGAL;
-            this.playerX -= centrifugal; 
-
-            // Clamp Position (Paredes invisíveis elásticas)
-            if(this.playerX < -5) { this.playerX = -5; this.speed *= 0.9; }
-            if(this.playerX > 5)  { this.playerX = 5;  this.speed *= 0.9; }
-
-            // 4. COLISÕES E IMPACTOS (SPIN)
-            // Obstáculos
-            seg.obs.forEach(o => {
-                // Hitbox simples
-                if (Math.abs(this.playerX - o.x) < 0.6 && Math.abs(o.zRelative) < 50) {
-                     this.triggerCrash(o.type === 'rock' ? 'HARD' : 'SOFT');
-                     o.hit = true; // Evita hit duplo
-                }
-            });
-
-            // Rivais (PVP)
-            this.rivals.forEach(r => {
-                let dist = r.pos - this.pos;
-                // Wrap around track
-                if (dist > trackLength/2) dist -= trackLength;
-                if (dist < -trackLength/2) dist += trackLength;
-
-                if (Math.abs(dist) < 200 && Math.abs(r.x - this.playerX) < 0.8) {
-                    this.triggerCrash('SOFT');
-                    // Empurrão
-                    const pushDir = (this.playerX - r.x) > 0 ? 1 : -1;
-                    this.playerX += pushDir * 0.5;
-                }
-            });
-
-            // Lógica do SPIN (Giro de câmera)
-            if (this.spinTimer > 0) {
-                this.spinTimer--;
-                this.spinAngle += 25; // Gira rápido
-                this.speed *= 0.94;   // Freia forte
-            } else {
-                // Retorna a câmera ao normal suavemente
-                if (this.spinAngle % 360 !== 0) {
-                    this.spinAngle = 0; 
-                }
-            }
-
-            // 5. PROGRESSÃO
-            this.pos += this.speed;
-            while (this.pos >= trackLength) {
-                this.pos -= trackLength;
-                this.lap++;
-                window.System.msg(`VOLTA ${this.lap}/${this.totalLaps}`);
-                window.Sfx.play(1000, 'sine', 0.5, 0.0);
-            }
-            while (this.pos < 0) this.pos += trackLength;
-
-            // Skill Points (Drift limpo)
-            if (this.speed > 100 && Math.abs(curvePower) > 1 && Math.abs(this.playerX) < 2) {
-                this.combo++;
-                this.score += Math.floor(this.combo / 10);
-            } else {
-                this.combo = Math.max(0, this.combo - 2); // Decay
-            }
-            
-            // Check Win
-            if (this.lap > this.totalLaps && this.state === 'RACE') {
-                this.state = 'FINISHED';
-                window.System.gameOver(Math.floor(this.score));
-            }
-
-            // Efeitos Visuais
-            if(this.screenShake > 0) this.screenShake *= 0.9;
-        },
-
-        triggerCrash: function(severity) {
-            if (this.spinTimer > 0) return; // Já está batido
-
-            window.Sfx.crash();
-            this.screenShake = severity === 'HARD' ? 20 : 10;
-            this.combo = 0; // Zera combo
-
-            if (severity === 'HARD') {
-                this.spinTimer = 40; // ~0.7s girando
-                this.speed *= 0.3; // Perde muita velocidade
-            } else {
-                this.speed *= 0.7;
-            }
-        },
-
-        // =================================================================
-        // RENDERIZAÇÃO (VISUAL PRO)
-        // =================================================================
-        renderWorld: function(ctx, w, h) {
-            const cx = w / 2;
-            const cy = h / 2;
-            const horizon = h * 0.45;
-
-            // 1. GLOBAL CAMERA TRANSFORMS (Shake & Spin)
-            ctx.save();
-            
-            // Screen Shake
-            const sx = (Math.random()-0.5) * this.screenShake;
-            const sy = (Math.random()-0.5) * this.screenShake;
-            ctx.translate(sx, sy);
-
-            // SPIN EFFECT (A câmera gira em torno do centro da tela)
-            if (this.spinAngle !== 0) {
-                ctx.translate(cx, cy);
-                ctx.rotate(this.spinAngle * Math.PI / 180);
-                ctx.translate(-cx, -cy);
-            }
-
-            // 2. BACKGROUND (Parallax)
-            this.drawBackground(ctx, w, h, horizon);
-
-            // 3. ESTRADA (Pseudo-3D)
-            const currentSegIdx = Math.floor(this.pos / CONF.SEGMENT_LENGTH);
-            let dx = 0; // Acumulador de curva
-            let ddy = 0; // Acumulador de colina (futuro)
-            
-            // Cam X: Posição do jogador relativa à estrada
-            // Interpolação para suavizar a câmera
-            const camX = this.playerX * (w * 0.35); 
-            
-            let maxY = h; // Z-Buffer simples (horizonte de baixo pra cima)
-
-            // FOV Effect (Estica quando rápido)
-            const fov = CONF.FOV_BASE + (this.turboLock ? 40 : 0) + (this.speed/10);
-
-            // Loop de renderização dos segmentos
-            for (let n = 0; n < CONF.DRAW_DISTANCE; n++) {
-                const segIdx = (currentSegIdx + n) % segments.length;
-                const seg = segments[segIdx];
-                
-                // Curva projetada
-                dx += seg.curve;
-                
-                // Projeção 3D -> 2D
-                // Z da câmera = 0. Z do segmento = n * segmentLength
-                const segZ = (n * CONF.SEGMENT_LENGTH); 
-                // Scale = dist / (z + dist)
-                const scale = fov / (fov + segZ); 
-                
-                // Próximo segmento (para conectar o poligono)
-                const scaleNext = fov / (fov + segZ + CONF.SEGMENT_LENGTH);
-
-                // Coordenadas de Tela
-                // X = (WorldX - CamX) * Scale + ScreenCenterX
-                // O termo dx acumula a curva visualmente
-                const screenX = cx + (-camX - dx * n * 2) * scale; 
-                const screenXNext = cx + (-camX - (dx + seg.curve) * (n+1) * 2) * scaleNext;
-                
-                const screenY = horizon + (1000 * scale); // 1000 = Camera Height fictício
-                const screenYNext = horizon + (1000 * scaleNext);
-                
-                const width = w * 2 * scale; // Largura da estrada
-                const widthNext = w * 2 * scaleNext;
-
-                // Culling (Não desenha se estiver escondido por uma colina)
-                if (screenYNext >= maxY) continue;
-                maxY = screenYNext;
-
-                // Desenha o segmento (Grama, Pista, Zebra)
-                this.drawSegment(ctx, w, screenY, screenYNext, screenX, screenXNext, width, widthNext, seg);
-                
-                // Armazena coords para desenhar sprites depois (Painters Algorithm)
-                seg.clipY = screenYNext;
-                seg.scale = scale;
-                seg.screenX = screenX;
-                seg.screenY = screenY;
-                
-                // Z-index para objetos
-                seg.zRelative = segZ;
-            }
-
-            // 4. SPRITES (De trás para frente)
-            for (let n = CONF.DRAW_DISTANCE - 1; n > 0; n--) {
-                const segIdx = (currentSegIdx + n) % segments.length;
-                const seg = segments[segIdx];
-                
-                // Rivais
-                this.rivals.forEach(r => {
-                     // Calcula posição relativa na pista circular
-                     let dist = r.pos - this.pos;
-                     if (dist > trackLength/2) dist -= trackLength;
-                     if (dist < -trackLength/2) dist += trackLength;
-                     
-                     // Se o rival está neste segmento (+- erro)
-                     if (dist >= n*CONF.SEGMENT_LENGTH && dist < (n+1)*CONF.SEGMENT_LENGTH) {
-                         const spriteScale = seg.scale * (w * 0.006);
-                         const spriteX = seg.screenX + (r.x * w * seg.scale);
-                         this.drawKart(ctx, spriteX, seg.screenY, spriteScale, 0, r.color, true);
-                     }
-                });
-
-                // Obstáculos
-                seg.obs.forEach(o => {
-                    const spriteScale = seg.scale * (w * 0.006);
-                    const spriteX = seg.screenX + (o.x * w * seg.scale * 1.5); // 1.5 para espalhar mais
-                    this.drawObstacle(ctx, o.type, spriteX, seg.screenY, spriteScale);
-                });
-            }
-
-            // 5. JOGADOR (Sempre na frente)
-            // Bounce effect based on speed and offroad
-            const bounce = (Math.abs(this.playerX) > CONF.OFFROAD_LIMIT ? Math.random()*5 : Math.sin(this.time * 0.5) * 2);
-            const kartY = h * 0.85 + bounce;
-            
-            // Inclinação visual nas curvas
-            const tilt = (this.steer * 20) + (this.spinAngle); 
-            
-            this.drawKart(ctx, cx, kartY, w * 0.006, tilt, CHARACTERS[this.selectedChar].color, false);
-
-            ctx.restore(); // Fim do Spin/Shake
-        },
-
-        drawSegment: function(ctx, w, y1, y2, x1, x2, w1, w2, seg) {
-            const trackStats = TRACKS[this.selectedTrack];
-            const cols = this.getThemeColors(trackStats.theme, seg.color);
-            
-            // Grama/Chão
-            ctx.fillStyle = cols.grass;
-            ctx.fillRect(0, y2, w, y1 - y2);
-
-            // Zebra (Rumble Strip)
-            const rW1 = w1 * 1.2; 
-            const rW2 = w2 * 1.2;
-            ctx.fillStyle = cols.rumble;
-            ctx.beginPath();
-            ctx.moveTo(x1 - rW1/2, y1); ctx.lineTo(x1 + rW1/2, y1);
-            ctx.lineTo(x2 + rW2/2, y2); ctx.lineTo(x2 - rW2/2, y2);
-            ctx.fill();
-
-            // Asfalto
-            ctx.fillStyle = cols.road;
-            ctx.beginPath();
-            ctx.moveTo(x1 - w1/2, y1); ctx.lineTo(x1 + w1/2, y1);
-            ctx.lineTo(x2 + w2/2, y2); ctx.lineTo(x2 - w2/2, y2);
-            ctx.fill();
-            
-            // Linha central
-            if (seg.color === 'dark') {
-                ctx.fillStyle = '#fff';
-                const lW1 = w1 * 0.02; const lW2 = w2 * 0.02;
-                ctx.beginPath();
-                ctx.moveTo(x1 - lW1, y1); ctx.lineTo(x1 + lW1, y1);
-                ctx.lineTo(x2 + lW2, y2); ctx.lineTo(x2 - lW2, y2);
-                ctx.fill();
-            }
-        },
-
-        getThemeColors: function(theme, type) {
-            const dark = type === 'dark';
-            if (theme === 'snow') {
-                return {
-                    grass: dark ? '#b2bec3' : '#dfe6e9', // Neve
-                    rumble: dark ? '#d63031' : '#fff',   // Zebra vermelha/branca
-                    road: dark ? '#636e72' : '#6c7a89'   // Asfalto gelado
-                };
-            } else if (theme === 'sand') {
-                return {
-                    grass: dark ? '#e67e22' : '#f1c40f', // Areia
-                    rumble: dark ? '#c0392b' : '#ecf0f1',
-                    road: dark ? '#7f8c8d' : '#95a5a6'
-                };
-            }
-            // Grass default
-            return {
-                grass: dark ? '#27ae60' : '#2ecc71',
-                rumble: dark ? '#c0392b' : '#ecf0f1',
-                road: dark ? '#34495e' : '#2c3e50'
-            };
-        },
-
-        drawBackground: function(ctx, w, h, horizon) {
-            // Céu gradiente simples
-            const grad = ctx.createLinearGradient(0, 0, 0, horizon);
-            const skyId = TRACKS[this.selectedTrack].sky;
-            if(skyId === 0) { grad.addColorStop(0, '#3498db'); grad.addColorStop(1, '#85c1e9'); } // Azul
-            if(skyId === 1) { grad.addColorStop(0, '#d35400'); grad.addColorStop(1, '#f39c12'); } // Laranja
-            if(skyId === 2) { grad.addColorStop(0, '#2c3e50'); grad.addColorStop(1, '#bdc3c7'); } // Cinza
-            
-            ctx.fillStyle = grad;
-            ctx.fillRect(-w, -h, w*3, h*3); // Overdraw para cobrir spin
-            
-            // Montanhas/Cenário (Parallax simples com formas)
-            ctx.fillStyle = 'rgba(0,0,0,0.2)';
-            const offset = (this.pos * 0.001) + (this.playerX * 0.1);
-            ctx.beginPath();
-            for(let i=0; i<10; i++) {
-                const mx = (i * w/4) - (offset * w) % (w*4);
-                ctx.lineTo(mx, horizon);
-                ctx.lineTo(mx + w/8, horizon - h*0.2);
-                ctx.lineTo(mx + w/4, horizon);
-            }
-            ctx.fill();
-        },
-
-        drawKart: function(ctx, x, y, scale, tilt, color, isRival) {
-            ctx.save();
-            ctx.translate(x, y);
-            ctx.scale(scale, scale);
-            ctx.rotate(tilt * Math.PI / 180);
-
-            // Sombra
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.beginPath(); ctx.ellipse(0, 20, 50, 10, 0, 0, Math.PI*2); ctx.fill();
-
-            // Chassi
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.moveTo(-30, -10); ctx.lineTo(30, -10);
-            ctx.lineTo(40, 20); ctx.lineTo(-40, 20);
-            ctx.fill();
-
-            // Motor / Detalhes
-            ctx.fillStyle = '#333';
-            ctx.fillRect(-15, -25, 30, 15);
-            
-            // Rodas (Aumentam com velocidade - squash/stretch fake)
-            ctx.fillStyle = '#111';
-            const wheelH = 25 + (this.speed/20);
-            ctx.fillRect(-45, 5, 15, wheelH); // Esq
-            ctx.fillRect(30, 5, 15, wheelH);  // Dir
-
-            // Capacete
-            ctx.fillStyle = '#fff';
-            ctx.beginPath(); ctx.arc(0, -15, 18, 0, Math.PI*2); ctx.fill();
-            
-            // Fogo do Nitro
-            if ((this.turboLock || isRival) && Math.random() > 0.5) {
-                ctx.fillStyle = '#0ff';
-                ctx.beginPath(); 
-                ctx.moveTo(-10, -10); ctx.lineTo(10, -10); ctx.lineTo(0, -50 - Math.random()*30); 
-                ctx.fill();
-            }
-
-            // Nome/ID
-            if (isRival) {
-                ctx.fillStyle = '#fff'; ctx.font="bold 24px Arial"; ctx.textAlign="center";
-                ctx.fillText("P2", 0, -50);
-            }
-
-            ctx.restore();
-        },
-
-        drawObstacle: function(ctx, type, x, y, scale) {
-            ctx.save();
-            ctx.translate(x, y);
-            ctx.scale(scale, scale);
-            
-            if (type === 'cone') {
-                ctx.fillStyle = '#e67e22';
-                ctx.beginPath(); ctx.moveTo(-15, 0); ctx.lineTo(15, 0); ctx.lineTo(0, -40); ctx.fill();
-                ctx.fillStyle = '#fff'; ctx.fillRect(-8, -25, 16, 5);
-            } else if (type === 'rock') {
-                ctx.fillStyle = '#7f8c8d';
-                ctx.beginPath(); ctx.arc(0, -15, 20, 0, Math.PI*2); ctx.fill();
-                ctx.fillStyle = '#95a5a6'; ctx.beginPath(); ctx.arc(-5, -20, 8, 0, Math.PI*2); ctx.fill();
-            }
-            ctx.restore();
-        },
-
-        // =================================================================
-        // HUD & INTERFACES
-        // =================================================================
-        renderHUD: function(ctx, w, h) {
-            // 1. Velocímetro Analógico
-            const cx = w - 80; const cy = h - 80; const r = 60;
-            ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); 
-            ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fill();
-            ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.stroke();
-            
-            // Ponteiro
-            const angle = Math.PI + (this.speed / CONF.TURBO_MAX_SPEED) * Math.PI;
-            ctx.strokeStyle = this.turboLock ? '#0ff' : '#e74c3c';
-            ctx.beginPath(); ctx.moveTo(cx, cy); 
-            ctx.lineTo(cx + Math.cos(angle)*r, cy + Math.sin(angle)*r); 
-            ctx.stroke();
-
-            // Texto KM/H
-            ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; 
-            ctx.font = "bold 20px 'Chakra Petch'"; 
-            ctx.fillText(Math.floor(this.speed), cx, cy + 30);
-
-            // 2. Combo / Score
-            if (this.combo > 10) {
-                ctx.fillStyle = '#f1c40f'; 
-                ctx.font = `bold ${40 + (this.combo/5)}px 'Russo One'`;
-                ctx.fillText(`COMBO x${Math.floor(this.combo/10)}`, w/2, 100);
-            }
-
-            // 3. Volante Virtual (Feedback Visual)
-            if (this.virtualWheel.opacity > 0.1) {
-                ctx.save();
-                ctx.globalAlpha = this.virtualWheel.opacity;
-                ctx.translate(this.virtualWheel.x, this.virtualWheel.y);
-                ctx.rotate(this.steer);
-                
-                ctx.beginPath(); ctx.arc(0,0, 50, 0, Math.PI*2);
-                ctx.lineWidth = 8; ctx.strokeStyle = '#fff'; ctx.stroke();
-                ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0, -50); ctx.stroke(); // Marcador topo
-                
-                ctx.restore();
-            }
-        },
-
-        renderModeSelect: function(ctx, w, h) {
-            // Fundo
-            ctx.fillStyle = '#2c3e50'; ctx.fillRect(0,0,w,h);
-            
-            // Título
-            ctx.fillStyle = '#fff'; ctx.textAlign='center'; 
-            ctx.font="bold 60px 'Russo One'"; ctx.fillText("OTTO KART PRO", w/2, 100);
-
-            // Botões desenhados (Hitbox registrada no update anterior)
-            const drawBtn = (label, y, color, id, cb) => {
-                const bx = w/2 - 200;
-                const bw = 400; const bh = 80;
-                ctx.fillStyle = color;
-                // Efeito Hover simples (se fosse mouse real, mas touch não tem hover)
-                ctx.fillRect(bx, y, bw, bh);
-                
-                ctx.fillStyle = '#fff'; ctx.font="30px 'Russo One'";
-                ctx.fillText(label, w/2, y + 50);
-
-                // Registra hitbox (normalizada)
-                this.registerButton(id, (bx)/w, y/h, bw/w, bh/h, cb);
-            };
-
-            drawBtn("JOGAR SOLO", h*0.4, '#e67e22', 'solo', () => this.enterLobby(false));
-            drawBtn("MULTIPLAYER", h*0.6, '#27ae60', 'multi', () => this.enterLobby(true));
-        },
-
-        renderLobby: function(ctx, w, h) {
-            ctx.fillStyle = '#34495e'; ctx.fillRect(0,0,w,h);
-            
-            const char = CHARACTERS[this.selectedChar];
-            const track = TRACKS[this.selectedTrack];
-
-            // Info
-            ctx.fillStyle = '#fff'; ctx.textAlign='center';
-            ctx.font="40px 'Russo One'"; ctx.fillText("GARAGEM", w/2, 80);
-
-            // Seleção Char
-            ctx.font="20px Arial"; ctx.fillText("PILOTO", w/2, h*0.25);
-            ctx.fillStyle = char.color; ctx.beginPath(); ctx.arc(w/2, h*0.35, 50, 0, Math.PI*2); ctx.fill();
-            ctx.fillStyle = '#fff'; ctx.font="30px 'Russo One'"; ctx.fillText(char.name, w/2, h*0.35 + 80);
-            
-            // Botão Trocar Char (Seta invisível gigante)
-            this.registerButton('char_next', 0.3, 0.25, 0.4, 0.2, () => {
-                this.selectedChar = (this.selectedChar + 1) % CHARACTERS.length;
-            });
-
-            // Seleção Pista
-            ctx.font="20px Arial"; ctx.fillText("PISTA", w/2, h*0.55);
-            ctx.fillStyle = '#ecf0f1'; ctx.fillRect(w/2 - 150, h*0.6, 300, 50);
-            ctx.fillStyle = '#2c3e50'; ctx.font="25px 'Russo One'"; ctx.fillText(track.name, w/2, h*0.6 + 35);
-            
-            this.registerButton('track_next', 0.3, 0.55, 0.4, 0.15, () => {
-                this.selectedTrack = (this.selectedTrack + 1) % TRACKS.length;
-            });
-
-            // Botão GO
-            const btnText = this.isReady ? "AGUARDANDO..." : "PRONTO!";
-            const btnColor = this.isReady ? '#7f8c8d' : '#27ae60';
-            
-            ctx.fillStyle = btnColor; ctx.fillRect(w/2 - 150, h*0.8, 300, 70);
-            ctx.fillStyle = '#fff'; ctx.fillText(btnText, w/2, h*0.8 + 45);
-
-            this.registerButton('go', 0.3, 0.8, 0.4, 0.15, () => this.toggleReady());
-        },
-
-        // =================================================================
-        // SISTEMA (Network & Maps)
-        // =================================================================
-        enterLobby: function(online) {
-            this.isOnline = online;
-            this.state = 'LOBBY';
-            window.System.msg(online ? "CONECTANDO..." : "MODO LOCAL");
-            
-            if (online) {
-                if(!window.DB) {
-                    window.System.msg("ERRO: SEM REDE!");
-                    this.isOnline = false;
                     return;
                 }
-                this.connectNet();
-            } else {
-                // Bots Falsos
+
+                if (this.state === 'LOBBY') {
+                    // Botão Start (área inferior)
+                    if (pY > 0.75) this.toggleReady(); 
+                    // Seleção Personagem (área superior)
+                    else if (pY < 0.4) {
+                        this.selectedChar = (this.selectedChar + 1) % CHARACTERS.length;
+                        window.Sfx.hover();
+                        if(this.isOnline) this.syncLobby();
+                    } 
+                    // Seleção Pista (área meio)
+                    else {
+                        this.selectedTrack = (this.selectedTrack + 1) % TRACKS.length;
+                        window.Sfx.hover();
+                        if(this.isOnline) this.syncLobby();
+                    }
+                }
+            };
+        },
+
+        resetPhysics: function() {
+            this.speed = 0; this.pos = 0; this.playerX = 0; this.steer = 0;
+            this.lap = 1; this.score = 0; this.driftState = 0; this.nitro = 100;
+            this.worldRotation = 0; this.spinVelocity = 0; this.shakeStrength = 0;
+            this.virtualWheel = { x:0, y:0, r:60, opacity:0, isHigh: false };
+            particles = [];
+        },
+
+        buildTrack: function(trackId) {
+            segments = [];
+            const trkConfig = TRACKS[trackId];
+            this.skyColor = trkConfig.sky;
+            const mult = trkConfig.curveMult;
+
+            const addRoad = (enter, curve, y) => {
+                for(let i = 0; i < enter; i++) {
+                    const isDark = Math.floor(segments.length / CONF.RUMBLE_LENGTH) % 2;
+                    segments.push({ curve: curve * mult, y: y, color: isDark ? 'dark' : 'light', obs: [], theme: trkConfig.theme });
+                }
+            };
+            const addProp = (index, type, offset) => { if (segments[index]) segments[index].obs.push({ type: type, x: offset }); };
+
+            addRoad(50, 0, 0); 
+            addRoad(20, 0.5, 0); 
+            addRoad(20, 1.5, 0);             
+            let sApex = segments.length; addRoad(30, 3.5, 0); addProp(sApex + 5, 'cone', 0.9);
+            addRoad(40, 0, 0);
+            addRoad(20, -1.0, 0); addRoad(60, -3.5, 0); 
+            let sHazards = segments.length; addRoad(70, 0, 0); 
+            addProp(sHazards + 15, 'cone', 0); addProp(sHazards + 35, 'cone', -0.6); 
+            addRoad(40, 1.2, 0);
+
+            trackLength = segments.length * CONF.SEGMENT_LENGTH;
+            if(trackLength === 0) trackLength = 2000;
+            buildMiniMap(segments);
+        },
+
+        selectMode: function(mode) {
+            this.resetPhysics();
+            if (mode === 'OFFLINE') {
+                this.isOnline = false;
+                window.System.msg("MODO SOLO");
                 this.rivals = [
-                    { id: 'cpu1', pos: 100, x: -0.5, color: '#8e44ad', name: 'CPU 1' },
-                    { id: 'cpu2', pos: 50, x: 0.5, color: '#f39c12', name: 'CPU 2' }
+                    { pos: 1000, lap: 1, x: -0.4, speed: 0, color: '#2ecc71', name: 'Luigi', aggro: 0.03 },
+                    { pos: 800,  lap: 1, x: 0.4,  speed: 0, color: '#3498db', name: 'Toad',  aggro: 0.025 }
                 ];
+                this.state = 'LOBBY';
+            } else {
+                if (!window.DB) {
+                    window.System.msg("SEM NET! INDO P/ SOLO");
+                    this.selectMode('OFFLINE');
+                    return;
+                }
+                this.isOnline = true;
+                window.System.msg("CONECTANDO...");
+                this.connectMultiplayer();
+                this.state = 'LOBBY';
+            }
+        },
+
+        connectMultiplayer: function() {
+            if (this.dbRef) this.dbRef.child('players').off(); 
+
+            this.dbRef = window.DB.ref('rooms/' + this.roomId);
+            const myRef = this.dbRef.child('players/' + window.System.playerId);
+            myRef.set({ name: 'Player', charId: 0, ready: false, lastSeen: firebase.database.ServerValue.TIMESTAMP });
+            myRef.onDisconnect().remove();
+
+            this.dbRef.child('players').on('value', (snap) => {
+                const data = snap.val();
+                if (!data) return;
+                
+                const now = Date.now();
+                const newRivals = Object.keys(data)
+                    .filter(id => id !== window.System.playerId)
+                    .filter(id => (now - (data[id].lastSeen || 0)) < 15000)
+                    .map(id => ({
+                        id: id,
+                        ...data[id],
+                        isRemote: true,
+                        speed: data[id].speed || 0,
+                        pos: data[id].pos || 0,
+                        x: data[id].x || 0,
+                        color: (data[id].charId !== undefined) ? CHARACTERS[data[id].charId].color : '#fff'
+                    }));
+                
+                this.rivals = newRivals;
+                this.checkAutoStart(data);
+            });
+        },
+
+        checkAutoStart: function(allPlayers) {
+            if (this.state !== 'WAITING' && this.state !== 'LOBBY') return;
+            
+            let readyCount = (this.isReady ? 1 : 0);
+            this.rivals.forEach(r => { if(r.ready) readyCount++; });
+            const totalPlayers = this.rivals.length + 1;
+
+            if (totalPlayers >= 2 && readyCount === totalPlayers) {
+                this.startRace(this.selectedTrack);
+            }
+            else if (totalPlayers >= 2 && readyCount >= 2) {
+                 if (!this.autoStartTimer) this.autoStartTimer = Date.now() + 15000;
+                 if (Date.now() > this.autoStartTimer) this.startRace(this.selectedTrack);
+            } else {
+                this.autoStartTimer = null;
             }
         },
 
         toggleReady: function() {
-            if (!this.isOnline) {
-                this.startRace();
-                return;
-            }
+            if (this.state !== 'LOBBY') return;
+            if (!this.isOnline) { this.startRace(this.selectedTrack); return; }
+
             this.isReady = !this.isReady;
-            this.state = this.isReady ? 'WAITING' : 'LOBBY';
+            window.Sfx.click();
+            
+            if (this.isReady) { this.state = 'WAITING'; window.System.msg("AGUARDANDO..."); } 
+            else { this.state = 'LOBBY'; this.autoStartTimer = null; }
             this.syncLobby();
         },
 
-        startRace: function() {
-            this.buildTrack(this.selectedTrack);
-            this.state = 'RACE';
-            this.time = 0;
-            this.combo = 0;
-            
-            // Ativa UI Nitro
-            if(nitroBtn) nitroBtn.style.display = 'flex';
-            
-            window.System.msg("LARGADA!");
-            window.Sfx.play(600, 'square', 0.5, 0.1);
-        },
-
-        buildTrack: function(id) {
-            segments = [];
-            const trk = TRACKS[id];
-            
-            const addRoad = (enter, curve, height) => {
-                for(let i=0; i<enter; i++) {
-                    segments.push({
-                        curve: curve,
-                        color: (Math.floor(segments.length/CONF.RUMBLE_LENGTH)%2) ? 'dark' : 'light',
-                        obs: []
-                    });
-                }
-            };
-
-            // GERAÇÃO PROCEDURAL DA PISTA
-            addRoad(50, 0, 0); // Start
-            addRoad(40, 0.5, 0); // Curva leve
-            addRoad(40, -0.5, 0);
-            addRoad(50, 1.5, 0); // Curva fechada
-            addRoad(20, 0, 0);
-            
-            // Obstáculos
-            const obsTypes = trk.theme === 'snow' ? 'rock' : 'cone';
-            
-            // Adiciona retas com obstáculos
-            for(let i=0; i<10; i++) {
-                addRoad(30, (Math.random()-0.5)*2, 0);
-                // Adiciona obstáculo no último segmento criado
-                if (Math.random() > 0.5) {
-                    segments[segments.length-1].obs.push({
-                        type: obsTypes,
-                        x: (Math.random()-0.5) * 3, // Espalhado na largura
-                        hit: false
-                    });
-                }
+        syncLobby: function() {
+            if (this.dbRef) {
+                this.dbRef.child('players/' + window.System.playerId).update({
+                    charId: this.selectedChar,
+                    trackId: this.selectedTrack,
+                    ready: this.isReady,
+                    lastSeen: firebase.database.ServerValue.TIMESTAMP
+                });
             }
-            
-            addRoad(50, 0, 0); // Finish line straight
-            trackLength = segments.length * CONF.SEGMENT_LENGTH;
         },
 
-        // NETCODE BÁSICO
-        connectNet: function() {
-            this.dbRef = window.DB.ref('rooms/' + this.roomId);
-            const myRef = this.dbRef.child('players/' + window.System.playerId);
-            myRef.set({ 
-                name: 'Player', charId: this.selectedChar, ready: false,
-                lastSeen: firebase.database.ServerValue.TIMESTAMP 
-            });
-            myRef.onDisconnect().remove();
+        startRace: function(trackId) {
+            if (this.state === 'RACE') return;
+            this.state = 'RACE';
+            this.buildTrack(trackId); 
+            nitroBtn.style.display = 'flex';
+            window.System.msg("VAI! VAI! VAI!");
+            window.Sfx.play(600, 'square', 0.5, 0.2);
+            window.System.canvas.onclick = null;
+        },
 
-            // Escuta
-            this.dbRef.child('players').on('value', snap => {
-                const val = snap.val();
-                if(!val) return;
+        update: function(ctx, w, h, pose) {
+            try {
+                if (this.state === 'MODE_SELECT') { this.renderModeSelect(ctx, w, h); return; }
+                if (this.state === 'LOBBY' || this.state === 'WAITING') { this.renderLobby(ctx, w, h); return; }
+                if (!segments || segments.length === 0) return 0;
                 
-                this.rivals = Object.keys(val)
-                    .filter(k => k !== window.System.playerId)
-                    .map(k => ({
-                        id: k, ...val[k],
-                        color: CHARACTERS[val[k].charId || 0].color,
-                        x: val[k].x || 0,
-                        pos: val[k].pos || 0
-                    }));
+                this.updatePhysics(w, h, pose);
+                this.renderWorld(ctx, w, h);
+                this.renderUI(ctx, w, h);
                 
-                // Auto start se todos prontos
-                const total = this.rivals.length + 1;
-                const readys = this.rivals.filter(r => r.ready).length + (this.isReady?1:0);
-                if (total > 1 && total === readys && this.state === 'WAITING') {
-                    this.startRace();
-                }
-            });
+                if (this.isOnline) this.syncMultiplayer();
+                return Math.floor(this.score);
+            } catch (err) {
+                console.error("Erro recuperado:", err);
+                return 0;
+            }
         },
 
         syncMultiplayer: function() {
             if (Date.now() - this.lastSync > 100) {
                 this.lastSync = Date.now();
                 this.dbRef.child('players/' + window.System.playerId).update({
+                    pos: Math.floor(this.pos),
                     x: this.playerX,
-                    pos: this.pos,
+                    lap: this.lap,
+                    steer: this.steer,
                     charId: this.selectedChar,
-                    ready: this.isReady
+                    lastSeen: firebase.database.ServerValue.TIMESTAMP
                 });
             }
         },
 
-        syncLobby: function() {
-            if (this.isOnline) {
-                this.dbRef.child('players/' + window.System.playerId).update({
-                    charId: this.selectedChar,
-                    ready: this.isReady
+        triggerSpin: function(severity) {
+            // EFEITO DE IMPACTO REAL (JUICE)
+            window.Sfx.crash();
+            window.Gfx.shakeScreen(severity === 'BIG' ? 20 : 10);
+            
+            // Inicia o giro do mundo
+            this.spinVelocity = severity === 'BIG' ? 25 : 15; 
+            
+            // Penalidade de velocidade
+            this.speed *= (severity === 'BIG' ? 0.3 : 0.6);
+            this.bounce = -20;
+        },
+
+        updatePhysics: function(w, h, pose) {
+            const d = Logic;
+            const charStats = CHARACTERS[this.selectedChar];
+
+            if (!Number.isFinite(d.speed)) d.speed = 0;
+            if (!Number.isFinite(d.pos)) d.pos = 0;
+            
+            // --- DETECÇÃO DE MÃOS ---
+            let detected = 0;
+            let pLeft = null, pRight = null;
+            let nose = null;
+
+            if (d.state === 'RACE' && pose && pose.keypoints) {
+                const lw = pose.keypoints.find(k => k.name === 'left_wrist');
+                const rw = pose.keypoints.find(k => k.name === 'right_wrist');
+                const n  = pose.keypoints.find(k => k.name === 'nose');
+
+                const mapPoint = (pt) => {
+                    let nx = pt.x;
+                    let ny = pt.y;
+                    if (nx > 1) nx = nx / 640; 
+                    if (ny > 1) ny = ny / 480;
+                    return { x: (1 - nx) * w, y: ny * h };
+                };
+
+                if (lw && lw.score > 0.15) { pLeft = mapPoint(lw); detected++; }
+                if (rw && rw.score > 0.15) { pRight = mapPoint(rw); detected++; }
+                if (n && n.score > 0.15) { nose = mapPoint(n); }
+
+                // TURBO GESTUAL (MANTIDO CONFORME ORIGINAL)
+                if (detected === 2 && nose) {
+                    const isHandsHigh = (pLeft.y < nose.y && pRight.y < nose.y);
+                    d.virtualWheel.isHigh = isHandsHigh;
+
+                    if (isHandsHigh) {
+                         d.gestureTimer++;
+                         if (d.gestureTimer > 15 && d.nitro > 5) { d.turboLock = true; window.System.msg("TURBO ATIVADO!"); }
+                    } else { 
+                        d.gestureTimer = 0; 
+                        if (d.nitro <= 0) d.turboLock = false; 
+                    }
+                } else {
+                    d.virtualWheel.isHigh = false;
+                }
+            }
+
+            // VOLANTE E INPUT
+            if (detected === 2) {
+                d.inputState = 2; // DETECTOU MÃOS!
+                const dx = pRight.x - pLeft.x; 
+                const dy = pRight.y - pLeft.y;
+                const rawAngle = Math.atan2(dy, dx);
+                d.targetSteer = (Math.abs(rawAngle) > 0.05) ? rawAngle * 2.5 : 0;
+                
+                d.virtualWheel.x = (pLeft.x + pRight.x) / 2; 
+                d.virtualWheel.y = (pLeft.y + pRight.y) / 2;
+                d.virtualWheel.r = Math.max(40, Math.hypot(dx, dy) / 2); 
+                d.virtualWheel.opacity = 1.0; 
+            } else {
+                d.inputState = 0; // SEM MÃOS
+                d.targetSteer = 0; 
+                d.virtualWheel.isHigh = false;
+                
+                // Volta para o centro se perder as mãos
+                d.virtualWheel.x += ((w / 2) - d.virtualWheel.x) * 0.1;
+                d.virtualWheel.y += ((h * 0.75) - d.virtualWheel.y) * 0.1;
+                d.virtualWheel.r += (60 - d.virtualWheel.r) * 0.1;
+                d.virtualWheel.opacity += (0.3 - d.virtualWheel.opacity) * 0.1;
+            }
+            
+            const speedRatio = d.speed / CONF.MAX_SPEED;
+
+            // FÍSICA PRO: Resposta melhorada do volante
+            d.steer += (d.targetSteer - d.steer) * CONF.FRICTION;
+            d.steer = Math.max(-1.5, Math.min(1.5, d.steer));
+
+            // --- LÓGICA DE ACELERAÇÃO ---
+            let currentMax = CONF.MAX_SPEED * charStats.speedInfo;
+            if (d.turboLock && d.nitro > 0) { currentMax = CONF.TURBO_MAX_SPEED; d.nitro -= 0.6; if(d.nitro <= 0) { d.nitro = 0; d.turboLock = false; } }
+            else { d.nitro = Math.min(100, d.nitro + 0.1); }
+            if(d.boostTimer > 0) { currentMax += 100; d.boostTimer--; }
+
+            const hasGas = (d.inputState > 0 || d.turboLock); 
+            
+            if (hasGas && d.state === 'RACE') {
+                d.speed += (currentMax - d.speed) * 0.075;
+            } else {
+                d.speed *= CONF.FRICTION; // FREIA SE SOLTAR
+            }
+
+            const absX = Math.abs(d.playerX);
+
+            // === ZEBRA (MELHORADA: AGORA TREME A TELA) ===
+            if (absX > 2.2 && absX <= 2.8) {
+                d.speed *= GAME_TUNING.offroadPenalty;
+                // Efeito visual de trepidação
+                d.visualTilt += (Math.random() - 0.5) * 4; 
+            }
+
+            // === OFF-ROAD ===
+            if (absX > 2.8) {
+                d.speed *= GAME_TUNING.offroadPenalty * 0.8;
+            }
+
+            // FÍSICA PRO: FORÇA CENTRÍFUGA REALISTA
+            // Se você não curvar contra a pista, você SAI dela.
+            const segIdx = Math.floor(d.pos / CONF.SEGMENT_LENGTH);
+            const seg = getSegment(segIdx);
+            
+            // Força que joga o carro para fora
+            const centrifugal = -seg.curve * (speedRatio * speedRatio) * CONF.CENTRIFUGAL_FORCE * 1.5; // Mais forte
+            
+            // Força do jogador virando
+            const steerPower = 0.18 * charStats.turnInfo;
+
+            d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
+
+            // Limites da pista (Parede invisível elástica)
+            if(d.playerX < -4.5) { d.playerX = -4.5; d.speed *= 0.95; }
+            if(d.playerX > 4.5)  { d.playerX = 4.5;  d.speed *= 0.95; }
+
+            // LÓGICA DO SPIN (GIRO 360)
+            if (Math.abs(d.spinVelocity) > 0.1) {
+                d.worldRotation += d.spinVelocity;
+                d.spinVelocity *= 0.92; // Desacelera o giro
+                // Snap para 0 se estiver quase parando
+                if (Math.abs(d.spinVelocity) < 0.5 && Math.abs(d.worldRotation % 360) < 10) {
+                     d.worldRotation = 0; d.spinVelocity = 0;
+                }
+            } else {
+                d.worldRotation = 0;
+            }
+
+            // COLISÕES COM OBSTÁCULOS
+            seg.obs.forEach(o => {
+                if(o.x < 10 && Math.abs(d.playerX - o.x) < 0.35 && Math.abs(d.playerX) < 4.0) {
+                    o.x = 999; // Remove obstáculo
+                    this.triggerSpin('BIG'); // GIRA O MUNDO!
+                }
+            });
+
+            // COLISÃO ENTRE JOGADORES (PVP)
+            d.rivals.forEach(r => {
+                let distZ = r.pos - d.pos;
+                if (distZ > trackLength / 2) distZ -= trackLength;
+                if (distZ < -trackLength / 2) distZ += trackLength;
+                let distX = r.x - d.playerX;
+
+                if (Math.abs(distZ) < 300 && Math.abs(distX) < 0.6) {
+                    // Empurrão e giro leve
+                    const push = 0.12 * GAME_TUNING.collisionForce * (0.6 + speedRatio * 0.4);
+                    d.playerX -= (distX > 0 ? push : -push);
+                    
+                    this.triggerSpin('SMALL');
+                }
+            });
+
+            d.pos += d.speed;
+            if (d.pos >= trackLength) {
+                d.pos -= trackLength; d.lap++;
+                if (d.lap <= d.totalLaps) { lapPopupText = `VOLTA ${d.lap}/${d.totalLaps}`; lapPopupTimer = 120; window.System.msg(lapPopupText); }
+                if(d.lap > d.totalLaps && d.state === 'RACE') { d.state = 'FINISHED'; window.System.msg(d.rank === 1 ? "VITÓRIA!" : "FIM!"); }
+            }
+            if (d.pos < 0) d.pos += trackLength;
+
+            // RIVAIS (SIMULAÇÃO)
+            let pAhead = 0;
+            d.rivals.forEach(r => {
+                if (r.isRemote) {
+                    r.pos += r.speed; 
+                    if(r.pos >= trackLength) { r.pos -= trackLength; r.lap++; }
+                } else {
+                    let dist = r.pos - d.pos;
+                    if(dist > trackLength/2) dist -= trackLength; if(dist < -trackLength/2) dist += trackLength;
+                    let targetS = CONF.MAX_SPEED * 0.45;
+                    r.speed += (targetS - r.speed) * (r.aggro || 0.03);
+                    r.pos += r.speed;
+                    if(r.pos >= trackLength) { r.pos -= trackLength; r.lap++; }
+                    if(r.pos < 0) r.pos += trackLength;
+                    const rSeg = getSegment(Math.floor(r.pos/CONF.SEGMENT_LENGTH));
+                    r.x += (-(rSeg.curve * 0.6) - r.x) * 0.05;
+                }
+                
+                let playerTotalDist = d.pos + (d.lap * trackLength);
+                let rivalTotalDist = r.pos + ((r.lap||1) * trackLength);
+                if (rivalTotalDist > playerTotalDist) pAhead++;
+            });
+            d.rank = 1 + pAhead;
+
+            d.time++; d.score += d.speed * 0.01; d.bounce *= 0.8;
+            if(Math.abs(d.playerX) > 2.2) { d.bounce = Math.sin(d.time)*5; window.Gfx.shakeScreen(2); }
+            d.visualTilt += ((d.steer * 16) - d.visualTilt) * (0.05 + (d.speed / CONF.MAX_SPEED) * 0.03);
+
+            if (d.state === 'FINISHED') {
+                d.speed *= 0.95;
+                if(d.speed < 2 && d.finishTimer === 0) { d.finishTimer = 1; setTimeout(()=> window.System.gameOver(Math.floor(d.score)), 2000); }
+            }
+        },
+
+        renderWorld: function(ctx, w, h) {
+            const d = Logic; const cx = w / 2; const horizon = h * 0.40;
+            const currentSegIndex = Math.floor(d.pos / CONF.SEGMENT_LENGTH);
+            const isOffRoad = Math.abs(d.playerX) > 2.2;
+
+            // 1. ROTAÇÃO GLOBAL (O SPIN DE BATIDA!)
+            ctx.save();
+            if (Math.abs(d.worldRotation) > 0.1) {
+                // Rotaciona ao redor do centro da tela
+                ctx.translate(w/2, h/2);
+                ctx.rotate(d.worldRotation * Math.PI / 180);
+                ctx.translate(-w/2, -h/2);
+            }
+
+            const skyGrads = [['#3388ff', '#88ccff'], ['#e67e22', '#f1c40f'], ['#0984e3', '#74b9ff']];
+            const currentSky = skyGrads[d.skyColor] || skyGrads[0];
+            const gradSky = ctx.createLinearGradient(0, 0, 0, horizon);
+            gradSky.addColorStop(0, currentSky[0]); gradSky.addColorStop(1, currentSky[1]);
+            // Desenha céu maior para cobrir rotação
+            ctx.fillStyle = gradSky; ctx.fillRect(-w, -h, w*3, h*3); 
+
+            const bgOffset = (getSegment(currentSegIndex).curve * 30) + (d.steer * 20);
+            ctx.fillStyle = d.skyColor === 0 ? '#44aa44' : (d.skyColor===1 ? '#d35400' : '#fff'); 
+            ctx.beginPath(); ctx.moveTo(0, horizon);
+            for(let i=0; i<=12; i++) { ctx.lineTo((w/12 * i) - (bgOffset * 0.5), horizon - 50 - Math.abs(Math.sin(i + d.pos*0.0001))*40); }
+            ctx.lineTo(w, horizon); ctx.fill();
+
+            const themes = {
+                'grass': { light: '#55aa44', dark: '#448833', off: '#336622' },
+                'sand':  { light: '#f1c40f', dark: '#e67e22', off: '#d35400' },
+                'snow':  { light: '#ffffff', dark: '#dfe6e9', off: '#b2bec3' }
+            };
+            const theme = themes[getSegment(currentSegIndex).theme || 'grass'];
+            ctx.fillStyle = isOffRoad ? theme.off : theme.dark; ctx.fillRect(0, horizon, w, h-horizon);
+
+            let dx = 0; let camX = d.playerX * (w * 0.4);
+            let segmentCoords = [];
+
+            // 1. DESENHA A ESTRADA (FUNDO P/ FRENTE)
+            for(let n = 0; n < CONF.DRAW_DISTANCE; n++) {
+                const segIdx = currentSegIndex + n;
+                const seg = getSegment(segIdx);
+                const segTheme = themes[seg.theme || 'grass'];
+
+                dx += (seg.curve * 0.8);
+                const z = n * 20; const scale = 1 / (1 + (z * 0.05));
+                const scaleNext = 1 / (1 + ((z+20) * 0.05));
+                const screenY = horizon + ((h - horizon) * scale);
+                const screenYNext = horizon + ((h - horizon) * scaleNext);
+                const screenX = cx - (camX * scale) - (dx * z * scale * 2);
+                const screenXNext = cx - (camX * scaleNext) - ((dx + seg.curve*0.8) * (z+20) * scaleNext * 2);
+                
+                segmentCoords.push({ x: screenX, y: screenY, scale: scale, index: segIdx });
+
+                ctx.fillStyle = (seg.color === 'dark') ? (isOffRoad?segTheme.off:segTheme.dark) : (isOffRoad?segTheme.off:segTheme.light);
+                ctx.fillRect(0, screenYNext, w, screenY - screenYNext);
+                
+                ctx.fillStyle = (seg.color === 'dark') ? '#c00' : '#fff'; 
+                ctx.beginPath(); 
+                ctx.moveTo(screenX - (w*3*scale)/2 - (w*3*scale)*0.1, screenY); 
+                ctx.lineTo(screenX + (w*3*scale)/2 + (w*3*scale)*0.1, screenY); 
+                ctx.lineTo(screenXNext + (w*3*scaleNext)/2 + (w*3*scaleNext)*0.1, screenYNext); 
+                ctx.lineTo(screenXNext - (w*3*scaleNext)/2 - (w*3*scaleNext)*0.1, screenYNext); 
+                ctx.fill();
+                
+                ctx.fillStyle = (seg.color === 'dark') ? '#666' : '#636363'; 
+                ctx.beginPath(); 
+                ctx.moveTo(screenX - (w*3*scale)/2, screenY); 
+                ctx.lineTo(screenX + (w*3*scale)/2, screenY); 
+                ctx.lineTo(screenXNext + (w*3*scaleNext)/2, screenYNext); 
+                ctx.lineTo(screenXNext - (w*3*scaleNext)/2, screenYNext); 
+                ctx.fill();
+            }
+
+            // 2. DESENHA OBJETOS E RIVAIS (TRAS P/ FRENTE)
+            for(let n = CONF.DRAW_DISTANCE - 1; n >= 0; n--) {
+                const coord = segmentCoords[n]; 
+                if (!coord) continue;
+                const seg = getSegment(coord.index);
+
+                d.rivals.forEach(r => {
+                    let rRelPos = r.pos - d.pos; 
+                    if(rRelPos < -trackLength/2) rRelPos += trackLength; 
+                    if(rRelPos > trackLength/2) rRelPos -= trackLength;
+
+                    if (Math.abs(Math.floor(rRelPos / CONF.SEGMENT_LENGTH) - n) < 2.0 && n > 0) {
+                        const rScale = coord.scale * w * 0.0055;
+                        const rx = coord.x + (r.x * (w * 3) * coord.scale / 2);
+                        this.drawKartSprite(ctx, rx, coord.y, rScale, 0, 0, r, r.color, true);
+                    }
                 });
+
+                seg.obs.forEach(o => {
+                    if (o.x > 500) return;
+                    const sX = coord.x + (o.x * (w * 3) * coord.scale / 2); const size = (w * 0.22) * coord.scale;
+                    if (o.type === 'cone') { 
+                        ctx.fillStyle = '#ff5500'; ctx.beginPath(); 
+                        ctx.moveTo(sX, coord.y - size); ctx.lineTo(sX - size*0.3, coord.y); ctx.lineTo(sX + size*0.3, coord.y); 
+                        ctx.fill(); 
+                    }
+                });
+            }
+            
+            const playerColor = CHARACTERS[d.selectedChar].color;
+            // MANTÉM A FUNÇÃO ORIGINAL DE DESENHO DO KART
+            this.drawKartSprite(ctx, cx, h*0.85 + d.bounce, w * 0.0055, d.steer, d.visualTilt, d, playerColor, false);
+            
+            particles.forEach((p, i) => { 
+                p.x += p.vx; p.y += p.vy; p.l--; 
+                if(p.l<=0) particles.splice(i,1); 
+                else { ctx.fillStyle=p.c; ctx.globalAlpha = p.l / 50; ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI*2); ctx.fill(); ctx.globalAlpha = 1.0; } 
+            });
+
+            ctx.restore(); // Restaura rotação do mundo
+        },
+
+        drawKartSprite: function(ctx, cx, y, carScale, steer, tilt, d, color, isRival) {
+            ctx.save(); 
+            ctx.translate(cx, y); 
+            ctx.scale(carScale, carScale);
+            ctx.rotate(tilt * 0.02 + (d.driftState === 1 ? d.driftDir * 0.3 : 0));
+            
+            ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.ellipse(0, 35, 60, 15, 0, 0, Math.PI*2); ctx.fill();
+            
+            const gradBody = ctx.createLinearGradient(-30, 0, 30, 0); 
+            gradBody.addColorStop(0, color); gradBody.addColorStop(0.5, '#fff'); gradBody.addColorStop(1, color);
+            ctx.fillStyle = gradBody; 
+            ctx.beginPath(); ctx.moveTo(-25, -30); ctx.lineTo(25, -30); ctx.lineTo(40, 10); ctx.lineTo(10, 35); ctx.lineTo(-10, 35); ctx.lineTo(-40, 10); ctx.fill();
+            
+            if (d.turboLock || d.boostTimer > 0) { 
+                ctx.fillStyle = (d.mtStage === 2 || d.turboLock) ? '#00ffff' : '#ffaa00'; 
+                ctx.beginPath(); ctx.arc(-20, -30, 10 + Math.random() * 15, 0, Math.PI*2); 
+                ctx.arc(20, -30, 10 + Math.random() * 15, 0, Math.PI*2); ctx.fill(); 
+            }
+            
+            const wheelAngle = steer * 0.8; 
+            const dw = (wx, wy) => { 
+                ctx.save(); ctx.translate(wx, wy); ctx.rotate(wheelAngle); 
+                ctx.fillStyle = '#111'; ctx.fillRect(-12, -15, 24, 30); 
+                ctx.fillStyle = '#666'; ctx.fillRect(-5, -5, 10, 10); 
+                ctx.restore(); 
+            };
+            dw(-45, 15); dw(45, 15); ctx.fillStyle='#111'; ctx.fillRect(-50, -25, 20, 30); ctx.fillRect(30, -25, 20, 30);
+            
+            ctx.save(); ctx.translate(0, -10); ctx.rotate(steer * 0.3); 
+            ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, -20, 18, 0, Math.PI*2); ctx.fill(); 
+            ctx.fillStyle = '#333'; ctx.fillRect(-15, -25, 30, 8); 
+            
+            if (isRival) {
+                ctx.fillStyle = '#0f0'; ctx.font='bold 12px Arial'; ctx.textAlign='center'; ctx.fillText('P2', 0, -32);
+            } else {
+                ctx.fillStyle = 'red'; ctx.font='bold 12px Arial'; ctx.textAlign='center'; ctx.fillText('EU', 0, -32);
+            }
+            ctx.restore(); 
+            
+            ctx.restore(); 
+        },
+
+        renderModeSelect: function(ctx, w, h) {
+            ctx.fillStyle = "#2c3e50"; ctx.fillRect(0, 0, w, h);
+            ctx.fillStyle = "white"; ctx.textAlign = "center"; ctx.font = "bold 40px 'Russo One'";
+            ctx.fillText("ESCOLHA O MODO DE JOGO", w/2, h * 0.2);
+
+            ctx.fillStyle = "#e67e22"; ctx.fillRect(w/2 - 200, h * 0.35, 400, 80);
+            ctx.fillStyle = "white"; ctx.font = "bold 30px sans-serif";
+            ctx.fillText("JOGAR SOZINHO (OFFLINE)", w/2, h * 0.35 + 50);
+
+            ctx.fillStyle = "#27ae60"; ctx.fillRect(w/2 - 200, h * 0.55, 400, 80);
+            ctx.fillStyle = "white";
+            ctx.fillText("MULTIPLAYER (ONLINE)", w/2, h * 0.55 + 50);
+        },
+
+        renderLobby: function(ctx, w, h) {
+            ctx.fillStyle = "#2c3e50"; ctx.fillRect(0, 0, w, h);
+            ctx.fillStyle = "white"; ctx.textAlign = "center"; ctx.font = "bold 40px 'Russo One'";
+            ctx.fillText("LOBBY DA CORRIDA", w/2, 60);
+
+            const c = CHARACTERS[this.selectedChar];
+            ctx.fillStyle = c.color; ctx.beginPath(); ctx.arc(w/2, h*0.3, 60, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "white"; ctx.font = "bold 30px sans-serif";
+            ctx.fillText(c.name, w/2, h*0.3 + 100);
+            
+            const t = TRACKS[this.selectedTrack];
+            ctx.fillStyle = "#34495e"; ctx.fillRect(w/2 - 150, h*0.55, 300, 60);
+            ctx.fillStyle = "#ecf0f1"; ctx.fillText("PISTA: " + t.name, w/2, h*0.55 + 40);
+
+            let btnText = "PRONTO (TOQUE P/ INICIAR)";
+            let btnColor = "#e67e22";
+
+            if (this.state === 'WAITING') {
+                btnText = "AGUARDANDO...";
+                if (this.autoStartTimer) {
+                    const timeLeft = Math.ceil((this.autoStartTimer - Date.now()) / 1000);
+                    btnText = `INICIANDO EM ${timeLeft}s...`;
+                }
+            } else if (this.state === 'LOBBY') {
+                btnColor = "#27ae60";
+            }
+
+            ctx.fillStyle = btnColor; ctx.fillRect(w/2 - 200, h*0.8, 400, 70);
+            ctx.fillStyle = "white"; ctx.font = "bold 25px 'Russo One'"; ctx.fillText(btnText, w/2, h*0.8 + 45);
+
+            ctx.textAlign = "left"; ctx.font = "14px monospace"; ctx.fillStyle = "#bdc3c7";
+            const onlineStatus = this.isOnline ? `Online (${this.rivals.length + 1})` : "Offline (Local)";
+            ctx.fillText(`Jogadores: ${onlineStatus}`, 20, h - 20);
+        },
+
+        renderUI: function(ctx, w, h) {
+            const d = Logic;
+            if (d.state === 'RACE') {
+                if (lapPopupTimer > 0) { 
+                    ctx.save(); ctx.globalAlpha = Math.min(1, lapPopupTimer / 30); 
+                    ctx.fillStyle = '#00ffff'; ctx.font = "bold 48px 'Russo One'"; ctx.textAlign = 'center'; 
+                    ctx.fillText(lapPopupText, w / 2, h * 0.45); ctx.restore(); lapPopupTimer--; 
+                }
+                
+                const hudX = w - 80; const hudY = h - 60; 
+                ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.arc(hudX, hudY, 55, 0, Math.PI * 2); ctx.fill();
+                const rpm = Math.min(1, d.speed / CONF.TURBO_MAX_SPEED); 
+                ctx.beginPath(); ctx.arc(hudX, hudY, 50, Math.PI, Math.PI + Math.PI * rpm); 
+                ctx.lineWidth = 6; ctx.strokeStyle = (d.turboLock || d.boostTimer > 0) ? '#00ffff' : '#ff3300'; ctx.stroke();
+                
+                ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; 
+                ctx.font = "bold 36px 'Russo One'"; ctx.fillText(Math.floor(d.speed), hudX, hudY + 10);
+                ctx.font = "bold 18px 'Russo One'"; ctx.fillText(`${d.rank} / ${d.rivals.length + 1}`, hudX, hudY + 42);
+                
+                const nW = 220; ctx.fillStyle = '#111'; ctx.fillRect(w / 2 - nW / 2, 20, nW, 20); 
+                ctx.fillStyle = d.turboLock ? '#00ffff' : (d.nitro > 20 ? '#00aa00' : '#ff3300'); 
+                ctx.fillRect(w / 2 - nW / 2 + 2, 22, (nW - 4) * (d.nitro / 100), 16);
+
+                if (minimapPoints.length > 0) {
+                    const mapSize = 130; const mapX = 25; const mapY = 95; ctx.save();
+                    ctx.fillStyle = 'rgba(10, 25, 40, 0.8)'; ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 2; 
+                    ctx.fillRect(mapX - 5, mapY - 5, mapSize + 10, mapSize + 10); 
+                    ctx.strokeRect(mapX - 5, mapY - 5, mapSize + 10, mapSize + 10);
+                    
+                    ctx.beginPath(); ctx.rect(mapX, mapY, mapSize, mapSize); ctx.clip();
+                    const b = minimapPoints.reduce((acc, p) => ({ minX: Math.min(acc.minX, p.x), maxX: Math.max(acc.maxX, p.x), minY: Math.min(acc.minY, p.y), maxY: Math.max(acc.maxY, p.y) }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+                    const s = Math.min(mapSize / (b.maxX - b.minX), mapSize / (b.maxY - b.minY)) * 0.85;
+                    
+                    ctx.translate(mapX + mapSize / 2, mapY + mapSize / 2); ctx.scale(s, s); 
+                    ctx.rotate(-getSegment(Math.floor(d.pos / CONF.SEGMENT_LENGTH)).curve * 0.7);
+                    ctx.translate(-(b.minX + b.maxX) / 2, -(b.minY + b.maxY) / 2); 
+                    
+                    ctx.strokeStyle = '#39ff14'; ctx.lineWidth = 4; ctx.beginPath();
+                    minimapPoints.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); }); ctx.stroke();
+                    
+                    const pi = Math.floor((d.pos / trackLength) * minimapPoints.length) % minimapPoints.length;
+                    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(minimapPoints[pi].x, minimapPoints[pi].y, 6, 0, Math.PI * 2); ctx.fill();
+                    
+                    d.rivals.forEach(r => { 
+                        let rIdx = Math.floor((r.pos / trackLength) * minimapPoints.length) % minimapPoints.length;
+                        if(minimapPoints[rIdx]) {
+                            ctx.fillStyle = r.color; ctx.beginPath(); 
+                            ctx.arc(minimapPoints[rIdx].x, minimapPoints[rIdx].y, 4, 0, Math.PI * 2); ctx.fill(); 
+                        }
+                    });
+                    ctx.restore();
+                }
+
+                if (d.virtualWheel.opacity > 0.01) {
+                    const vw = d.virtualWheel; 
+                    ctx.save(); 
+                    ctx.globalAlpha = vw.opacity; 
+                    ctx.translate(vw.x, vw.y);
+                    
+                    if (vw.isHigh) {
+                        ctx.shadowBlur = 25;
+                        ctx.shadowColor = '#00ffff';
+                    } else {
+                        ctx.shadowBlur = 0;
+                    }
+
+                    // FIX CRÍTICO AQUI: Garantir que o raio nunca seja negativo
+                    const safeR = Math.max(0, vw.r);
+                    const safeInnerR = Math.max(0, vw.r - 8);
+
+                    ctx.lineWidth = 8; ctx.strokeStyle = '#222'; ctx.beginPath(); ctx.arc(0, 0, safeR, 0, Math.PI * 2); ctx.stroke();
+                    ctx.lineWidth = 4; ctx.strokeStyle = '#00ffff'; ctx.beginPath(); ctx.arc(0, 0, safeInnerR, 0, Math.PI * 2); ctx.stroke();
+                    ctx.rotate(d.steer * 1.4); 
+                    ctx.fillStyle = '#ff3300'; ctx.beginPath(); ctx.fillRect(-4, -safeR + 10, 8, 22);
+                    ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI * 2); ctx.fill(); 
+                    ctx.restore();
+                }
+            } else {
+                ctx.fillStyle = "rgba(0,0,0,0.85)"; ctx.fillRect(0, 0, w, h);
+                ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.font = "bold 60px 'Russo One'";
+                ctx.fillText(d.rank === 1 ? "VITÓRIA!" : `${d.rank}º LUGAR`, w / 2, h * 0.3);
             }
         }
     };
 
-    // REGISTRO NO SISTEMA (CORE)
     if(window.System) {
-        window.System.registerGame('drive', 'OTTO KART PRO', '🏎️', Logic, {
-            camOpacity: 0.15, // Leve transparência para ver as mãos
-            showWheel: true
+        window.System.registerGame('drive', 'Otto Kart GP', '🏎️', Logic, {
+            camOpacity: 0.1, 
+            showWheel: true 
         });
     }
-
-})();
+})()
