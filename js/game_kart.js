@@ -1,25 +1,34 @@
 // =============================================================================
-// KART LEGENDS: DEFINITIVE EDITION (V-177)
-// ARQUITETURA: PSEUDO-3D OUTRUN ENGINE (OTIMIZADO)
+// KART LEGENDS: DEFINITIVE EDITION (V-FINAL 177)
+// ENGINE: PSEUDO-3D CLASSICA (ESTILO OUTRUN) COM VISUAL RETRO-MODERNO
 // =============================================================================
 
 (function() {
+
+    // --- PATCH DE SEGURANÇA (CORREÇÃO DO ERRO DO CONSOLE) ---
+    // Garante que o elemento 'loading-text' exista para o core.js não travar
+    if (!document.getElementById('loading-text')) {
+        const fixEl = document.createElement('div');
+        fixEl.id = 'loading-text';
+        fixEl.style.display = 'none';
+        document.body.appendChild(fixEl);
+    }
 
     // -----------------------------------------------------------------
     // 1. CONFIGURAÇÕES E TUNING (GAME DESIGN)
     // -----------------------------------------------------------------
     const CONF = {
-        // Câmera (Ajustada para ficar igual à referência)
-        CAMERA_HEIGHT: 1100, 
+        // Câmera (Ajustada para o ângulo da imagem de referência)
+        CAMERA_HEIGHT: 1200, 
         CAMERA_DEPTH: 0.85,  
         FOV: 100,
         
         // Pista
         SEGMENT_LENGTH: 200,
         RUMBLE_LENGTH: 3,
-        ROAD_WIDTH: 2000,
+        ROAD_WIDTH: 2200, // Pista larga estilo arcade
         LANES: 3,
-        drawDistance: 300, // Visibilidade distante
+        DRAW_DISTANCE: 300, // Visibilidade distante
 
         // Física
         MAX_SPEED: 240, // Km/h visual
@@ -32,9 +41,9 @@
     };
 
     const CHARACTERS = [
-        { id: 0, name: 'MARIO', color: '#e74c3c', speed: 1.0, grip: 0.98 },  // Equilibrado
-        { id: 1, name: 'LUIGI', color: '#2ecc71', speed: 1.05, grip: 0.94 }, // Rápido/Escorrega
-        { id: 2, name: 'PEACH', color: '#f1c40f', speed: 0.95, grip: 1.05 }  // Controle total
+        { id: 0, name: 'MARIO', color: '#e74c3c', speed: 1.0, grip: 0.98 },  // Vermelho
+        { id: 1, name: 'LUIGI', color: '#2ecc71', speed: 1.05, grip: 0.94 }, // Verde
+        { id: 2, name: 'PEACH', color: '#f1c40f', speed: 0.95, grip: 1.05 }  // Amarelo
     ];
 
     const TRACKS = [
@@ -43,11 +52,29 @@
         { id: 2, name: 'GELO FINAL', theme: 'snow', sky: 2, curveMult: 1.3 }
     ];
 
-    // Cores Vibrantes (Estilo Nintendo)
+    // Cores Vibrantes (Baseadas na imagem de referência)
     const THEMES = {
-        grass: { sky: ['#00B4DB', '#0083B0'], road: '#636e72', roadLine: '#fff', rumble: ['#c0392b', '#ecf0f1'], ground: '#55aa44' },
-        sand:  { sky: ['#FF8008', '#FFC837'], road: '#7f8c8d', roadLine: '#fff', rumble: ['#d35400', '#f39c12'], ground: '#f1c40f' },
-        snow:  { sky: ['#83a4d4', '#b6fbff'], road: '#95a5a6', roadLine: '#ecf0f1', rumble: ['#2980b9', '#3498db'], ground: '#dfe6e9' }
+        grass: { 
+            sky: ['#00B4DB', '#0083B0'], 
+            road: '#525c65', 
+            roadLine: '#ffffff', 
+            rumble: ['#c0392b', '#ecf0f1'], // Zebra clássica Vermelha/Branca
+            ground: '#55aa44' 
+        },
+        sand: { 
+            sky: ['#FF8008', '#FFC837'], 
+            road: '#7f8c8d', 
+            roadLine: '#ffffff', 
+            rumble: ['#d35400', '#f39c12'], 
+            ground: '#f1c40f' 
+        },
+        snow: { 
+            sky: ['#83a4d4', '#b6fbff'], 
+            road: '#95a5a6', 
+            roadLine: '#ecf0f1', 
+            rumble: ['#2980b9', '#3498db'], 
+            ground: '#dfe6e9' 
+        }
     };
 
     // -----------------------------------------------------------------
@@ -230,7 +257,6 @@
                         id: id,
                         isRemote: true,
                         ...data[id],
-                        // Tratamento para evitar que undefined quebre o render
                         z: data[id].pos || 0,
                         x: data[id].x || 0,
                         speed: data[id].speed || 0
@@ -315,7 +341,7 @@
                     curve: curve,
                     sprites: sprites,
                     color: Math.floor(n / CONF.RUMBLE_LENGTH) % 2 ? 'dark' : 'light',
-                    y: y // Heightmap futuro (por enquanto plano)
+                    y: y 
                 });
             };
 
@@ -434,20 +460,15 @@
             }
 
             if (!handsDetected) {
-                // Fallback para toque/mouse já foi lido no onclick? Não, para driving precisamos de continuous press.
-                // Mas aqui usamos fallback simples: se não tem pose, input vai voltando a zero.
-                // Poderíamos adicionar touch zones laterais invisíveis aqui se necessário.
+                // Se não tem pose, input vai voltando a zero (auto-center)
                 this.virtualWheel.isActive = false;
                 this.virtualWheel.opacity *= 0.9;
-                
-                // Mouse/Touch fallback implícito: se clicar nas bordas (implementação simples)
-                // (Para manter robustez, focamos na webcam ou auto-center)
                 this.targetSteer *= 0.8; 
             }
 
-            // Suavização (Lerp)
+            // Suavização (Lerp) para evitar movimentos bruscos
             this.steer += (this.targetSteer - this.steer) * 0.2;
-            // Clamp
+            // Limite do volante
             this.steer = Math.max(-1.5, Math.min(1.5, this.steer));
         },
 
@@ -467,9 +488,6 @@
                     
                     car.z += car.speed;
                     if (car.z >= trackLen) { car.z -= trackLen; car.lap = (car.lap||1)+1; }
-                } else if (car.isRemote) {
-                    // Interpolation básica visual seria ideal, mas aqui só atualizamos pos
-                    // A posição z é absoluta na pista (0-length)
                 }
 
                 // Rank Check
@@ -516,14 +534,13 @@
             // 2. PISTA (PROJEÇÃO 3D)
             const baseSegment = this.findSegment(this.position);
             const basePercent = (this.position % CONF.SEGMENT_LENGTH) / CONF.SEGMENT_LENGTH;
-            const playerY = 0; // Camera height offset se tiver morros
             
             let dx = -(baseSegment.curve * basePercent);
             let x = 0;
-            let maxY = h; // Clip buffer
+            let maxY = h; // Clip buffer para evitar desenho "por cima" do que está perto
 
             // Loop de Renderização (Draw Distance)
-            for(let n = 0; n < CONF.drawDistance; n++) {
+            for(let n = 0; n < CONF.DRAW_DISTANCE; n++) {
                 const segment = this.segments[(baseSegment.index + n) % this.segments.length];
                 const looped = segment.index < baseSegment.index;
                 
@@ -533,7 +550,6 @@
                 let camZ = this.position - (looped ? this.trackLength : 0);
 
                 // Projeção
-                // p1 = perto, p2 = longe
                 this.project(segment.p1, (this.playerX * CONF.ROAD_WIDTH) - x,      camY, this.position - (looped ? this.trackLength : 0), w, h);
                 this.project(segment.p2, (this.playerX * CONF.ROAD_WIDTH) - x - dx, camY, this.position - (looped ? this.trackLength : 0), w, h);
 
@@ -550,11 +566,6 @@
                 this.renderSegment(ctx, w, segment, theme);
                 maxY = segment.p1.screen.y;
 
-                // Prepara Sprites para desenhar depois (Painter's algorithm para sprites)
-                // Aqui simplificamos desenhando na passada ou coletando
-                // Para performance, vamos desenhar sprites aqui se estiverem visíveis, 
-                // mas rivais precisam de z-sort. Vamos desenhar sprites estáticos aqui.
-                
                 // Sprites Laterais
                 for(let i=0; i<segment.sprites.length; i++) {
                     const sprite = segment.sprites[i];
@@ -572,7 +583,7 @@
                         const carX = segment.p1.screen.x + (carScale * car.x * CONF.ROAD_WIDTH * w/2);
                         const carY = segment.p1.screen.y;
                         const rivalColor = CHARACTERS[car.charId || 1].color;
-                        // Renderiza Rival (Simples, sem banking complexo)
+                        // Renderiza Rival (Menor, mais simples)
                         this.renderKart(ctx, carX, carY, carScale * w, 0, rivalColor, false);
                     }
                 });
@@ -584,24 +595,18 @@
         },
 
         project: function(p, cameraX, cameraY, position, w, h) {
-            p.camera.x = (p.world.z || 0) - position; // World Z fixo no segmento, ajustado pela pos do player? 
-            // Correção: Pseudo-3D clássico usa loop relativo
-            // No setup simples, world.z é absoluto.
+            p.camera.x = (p.world.z || 0) - position; 
             p.camera.z = p.world.z - position;
             // Loop Z
             if (p.camera.z < 0) p.camera.z += this.trackLength;
             
-            p.camera.y = cameraY; // Altura câmera fixa vs chão 0
+            p.camera.y = cameraY; 
             
             // Fator de escala baseada na profundidade (Z)
             p.screen.scale = CONF.CAMERA_DEPTH / p.camera.z;
             
-            // X na tela: Centro + (Xmundo - Xcamera) * Escala
-            // O "Xmundo" da estrada curva é acumulado no loop de renderização (variável x e dx)
-            // Aqui projetamos apenas o centro base. O offset da curva é aplicado no renderSegment
+            // Projeção na tela
             p.screen.x = Math.round((w/2) + (p.screen.scale * -cameraX * w/2));
-            
-            // Y na tela: Centro + (Ymundo - Ycamera) * Escala
             p.screen.y = Math.round((h/2) - (p.screen.scale * p.camera.y * h/2));
             p.screen.w = Math.round(p.screen.scale * CONF.ROAD_WIDTH * w/2);
         },
@@ -672,7 +677,7 @@
         // Desenho do Kart (Sem tombar!)
         renderPlayer: function(ctx, x, y, scale) {
             const bounce = Math.sin(Date.now() * 0.02) * (this.speed * 0.05);
-            // Banking visual suave: inclina o corpo, mas não roda tudo
+            // Banking visual suave: inclina o corpo (offset), mas não roda todo o canvas
             const lean = this.steer * 0.3; 
             
             // Cor do Jogador
@@ -698,7 +703,7 @@
             ctx.fillRect(w/4, -h/2, w/4, h/2);  // Dir
 
             // Chassi (Corpo Principal)
-            // Aplica o "Lean" (inclinação) deformando o trapézio, não rodando o canvas
+            // Aplica o "Lean" deformando o trapézio
             ctx.fillStyle = color;
             ctx.beginPath();
             ctx.moveTo(-w/2.2, -h/1.5 + (lean*10)); // Sobe/desce lado esq
@@ -707,8 +712,7 @@
             ctx.lineTo(-w/2.2, 0);
             ctx.fill();
 
-            // Pneus Dianteiros (Com esterçamento)
-            // Se steer > 0 (direita), pneu esquerdo avança visualmente
+            // Pneus Dianteiros (Com esterçamento visual)
             const wheelTurn = isPlayer ? this.steer * 5 : 0;
             ctx.fillStyle = '#222';
             ctx.fillRect(-w/2.1 + wheelTurn, 0, w/4.5, h/2.5); // Esq
@@ -733,7 +737,7 @@
         },
 
         renderHUD: function(ctx, w, h) {
-            // Speedometer
+            // Velocímetro
             ctx.fillStyle = "#fff";
             ctx.textAlign = "right";
             ctx.font = "italic bold 40px 'Russo One'";
@@ -786,7 +790,6 @@
             ctx.font = "italic bold 60px 'Russo One'";
             ctx.fillText("KART LEGENDS", w/2, h*0.3);
             
-            // Botões desenhados (lógica de clique no setupUI)
             this.drawButton(ctx, w/2, h*0.5, "JOGO RÁPIDO", "#e67e22");
             this.drawButton(ctx, w/2, h*0.65, "MULTIPLAYER", "#27ae60");
         },
@@ -822,10 +825,8 @@
         }
     };
 
-    // Helper de cor
-    function adjustColor(color, amount) {
-        return color; // Simplificado para performance, idealmente usaria hex manipulation
-    }
+    // Helper de cor simples
+    function adjustColor(color, amount) { return color; }
 
     // Registro
     if(window.System) {
