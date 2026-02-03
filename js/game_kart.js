@@ -1,11 +1,11 @@
 // =============================================================================
-// KART DO OTTO – ULTIMATE V15 (RESTAURAÇÃO TOTAL + FÍSICA PRO + UI FIX)
+// KART DO OTTO – V4.0 (CORREÇÃO DE FÍSICA: SPIN DO CARRO, NÃO DO MUNDO)
 // =============================================================================
 
 (function() {
 
     // -----------------------------------------------------------------
-    // 1. DADOS E CONFIGURAÇÕES (ORIGINAIS MANTIDOS)
+    // 1. DADOS E CONFIGURAÇÕES
     // -----------------------------------------------------------------
     const CHARACTERS = [
         { id: 0, name: 'OTTO', color: '#e74c3c', speedInfo: 1.0, turnInfo: 1.0 },
@@ -23,9 +23,9 @@
         SPEED: 120,
         MAX_SPEED: 200,
         TURBO_MAX_SPEED: 280,
-        FRICTION: 0.96,        // Aumentei levemente o atrito para "sentir" o chão
-        OFFROAD_DECEL: 0.94,
-        CENTRIFUGAL_FORCE: 0.35, // Aumentei para punir quem não faz a curva
+        FRICTION: 0.97,        // Atrito do solo
+        OFFROAD_DECEL: 0.94,   // Desaceleração na grama
+        CENTRIFUGAL_FORCE: 0.28, // Força G nas curvas
 
         CAMERA_DEPTH: 0.84,
         CAMERA_HEIGHT: 1000,
@@ -40,9 +40,9 @@
     const GAME_TUNING = {
         gripLoss: 0.82,
         offroadPenalty: 0.85,
-        zebraInstability: 0.25, // Zebra treme mais
-        collisionForce: 1.5,    // Batida empurra mais
-        centrifugalBoost: 0.8   // Curva joga mais pra fora
+        zebraInstability: 0.15,
+        collisionForce: 1.2,    // Força do empurrão na batida
+        spinFriction: 0.92      // Quão rápido o carro para de girar
     };
 
     let minimapPoints = [];
@@ -96,10 +96,10 @@
         visualTilt: 0, bounce: 0, skyColor: 0, 
         inputState: 0, gestureTimer: 0,
         
-        // Efeitos Visuais de Impacto
-        worldRotation: 0,  // Para o efeito de Spin 360
-        spinVelocity: 0,
-        shakeStrength: 0,
+        // --- VARIÁVEIS DE COLISÃO CORRIGIDAS ---
+        playerSpin: 0,      // Ângulo de rotação DO CARRO (não do mundo)
+        spinVelocity: 0,    // Velocidade angular do giro
+        shakeStrength: 0,   // Tremor de tela (apenas transladação, sem rotação)
 
         virtualWheel: { x:0, y:0, r:60, opacity:0, isHigh: false },
         rivals: [], 
@@ -152,21 +152,13 @@
             nitroBtn.addEventListener('mousedown', toggleTurbo);
             document.getElementById('game-ui').appendChild(nitroBtn);
 
-            // CORREÇÃO CRÍTICA DE INPUT UI: Usando getBoundingClientRect
+            // CORREÇÃO DE INPUT PARA TELAS DE DIFERENTES TAMANHOS
             window.System.canvas.onclick = (e) => {
                 const rect = window.System.canvas.getBoundingClientRect();
                 
-                // Coordenadas relativas exatas
-                const mouseX = e.clientX - rect.left;
-                const mouseY = e.clientY - rect.top;
-                
-                // Escala para resolução interna do canvas se necessário (aqui assumimos 1:1 visual)
-                const w = window.System.canvas.width;
-                const h = window.System.canvas.height;
-
-                // Normaliza para porcentagem para facilitar detecção responsiva
-                const pX = mouseX / rect.width;
-                const pY = mouseY / rect.height;
+                // Coordenadas normalizadas (0.0 a 1.0)
+                const pX = (e.clientX - rect.left) / rect.width;
+                const pY = (e.clientY - rect.top) / rect.height;
 
                 if (this.state === 'MODE_SELECT') {
                     if (pY < 0.5) this.selectMode('OFFLINE');
@@ -176,15 +168,15 @@
                 }
 
                 if (this.state === 'LOBBY') {
-                    // Botão Start (área inferior)
-                    if (pY > 0.75) this.toggleReady(); 
-                    // Seleção Personagem (área superior)
+                    // Botão Iniciar (Baixo)
+                    if (pY > 0.7) this.toggleReady(); 
+                    // Selecionar Personagem (Cima)
                     else if (pY < 0.4) {
                         this.selectedChar = (this.selectedChar + 1) % CHARACTERS.length;
                         window.Sfx.hover();
                         if(this.isOnline) this.syncLobby();
                     } 
-                    // Seleção Pista (área meio)
+                    // Selecionar Pista (Meio)
                     else {
                         this.selectedTrack = (this.selectedTrack + 1) % TRACKS.length;
                         window.Sfx.hover();
@@ -197,7 +189,12 @@
         resetPhysics: function() {
             this.speed = 0; this.pos = 0; this.playerX = 0; this.steer = 0;
             this.lap = 1; this.score = 0; this.driftState = 0; this.nitro = 100;
-            this.worldRotation = 0; this.spinVelocity = 0; this.shakeStrength = 0;
+            
+            // Reinicia variáveis de física de colisão
+            this.playerSpin = 0;
+            this.spinVelocity = 0;
+            this.shakeStrength = 0;
+            
             this.virtualWheel = { x:0, y:0, r:60, opacity:0, isHigh: false };
             particles = [];
         },
@@ -315,17 +312,6 @@
             this.syncLobby();
         },
 
-        syncLobby: function() {
-            if (this.dbRef) {
-                this.dbRef.child('players/' + window.System.playerId).update({
-                    charId: this.selectedChar,
-                    trackId: this.selectedTrack,
-                    ready: this.isReady,
-                    lastSeen: firebase.database.ServerValue.TIMESTAMP
-                });
-            }
-        },
-
         startRace: function(trackId) {
             if (this.state === 'RACE') return;
             this.state = 'RACE';
@@ -368,17 +354,19 @@
             }
         },
 
-        triggerSpin: function(severity) {
-            // EFEITO DE IMPACTO REAL (JUICE)
+        triggerCrash: function(severity) {
+            // FÍSICA DE BATIDA: O Carro roda, o mundo não.
             window.Sfx.crash();
             window.Gfx.shakeScreen(severity === 'BIG' ? 20 : 10);
             
-            // Inicia o giro do mundo
+            // Define velocidade de rotação do Sprite
             this.spinVelocity = severity === 'BIG' ? 25 : 15; 
+            if(Math.random() > 0.5) this.spinVelocity *= -1; // Direção aleatória
             
             // Penalidade de velocidade
             this.speed *= (severity === 'BIG' ? 0.3 : 0.6);
-            this.bounce = -20;
+            this.bounce = -15;
+            this.nitro = Math.max(0, this.nitro - 10); // Perde um pouco de nitro
         },
 
         updatePhysics: function(w, h, pose) {
@@ -388,7 +376,7 @@
             if (!Number.isFinite(d.speed)) d.speed = 0;
             if (!Number.isFinite(d.pos)) d.pos = 0;
             
-            // --- DETECÇÃO DE MÃOS ---
+            // --- DETECÇÃO DE MÃOS (WEB CAM) ---
             let detected = 0;
             let pLeft = null, pRight = null;
             let nose = null;
@@ -410,7 +398,7 @@
                 if (rw && rw.score > 0.15) { pRight = mapPoint(rw); detected++; }
                 if (n && n.score > 0.15) { nose = mapPoint(n); }
 
-                // TURBO GESTUAL (MANTIDO CONFORME ORIGINAL)
+                // TURBO GESTUAL (MÃOS PARA CIMA)
                 if (detected === 2 && nose) {
                     const isHandsHigh = (pLeft.y < nose.y && pRight.y < nose.y);
                     d.virtualWheel.isHigh = isHandsHigh;
@@ -444,7 +432,7 @@
                 d.targetSteer = 0; 
                 d.virtualWheel.isHigh = false;
                 
-                // Volta para o centro se perder as mãos
+                // Retorna volante para posição de descanso
                 d.virtualWheel.x += ((w / 2) - d.virtualWheel.x) * 0.1;
                 d.virtualWheel.y += ((h * 0.75) - d.virtualWheel.y) * 0.1;
                 d.virtualWheel.r += (60 - d.virtualWheel.r) * 0.1;
@@ -453,8 +441,8 @@
             
             const speedRatio = d.speed / CONF.MAX_SPEED;
 
-            // FÍSICA PRO: Resposta melhorada do volante
-            d.steer += (d.targetSteer - d.steer) * CONF.FRICTION;
+            // FÍSICA: Suavização do volante
+            d.steer += (d.targetSteer - d.steer) * CONF.FRICTION * (1 - (1 - GAME_TUNING.gripLoss) * speedRatio);
             d.steer = Math.max(-1.5, Math.min(1.5, d.steer));
 
             // --- LÓGICA DE ACELERAÇÃO ---
@@ -473,56 +461,60 @@
 
             const absX = Math.abs(d.playerX);
 
-            // === ZEBRA (MELHORADA: AGORA TREME A TELA) ===
+            // === ZEBRA E TERRENO ===
             if (absX > 2.2 && absX <= 2.8) {
                 d.speed *= GAME_TUNING.offroadPenalty;
-                // Efeito visual de trepidação
-                d.visualTilt += (Math.random() - 0.5) * 4; 
+                d.playerX += Math.sin(d.time * 0.4) * GAME_TUNING.zebraInstability; // Instabilidade
             }
 
-            // === OFF-ROAD ===
             if (absX > 2.8) {
                 d.speed *= GAME_TUNING.offroadPenalty * 0.8;
+                d.playerX *= 0.98; // Puxa levemente para o centro se estiver muito fora
             }
 
-            // FÍSICA PRO: FORÇA CENTRÍFUGA REALISTA
-            // Se você não curvar contra a pista, você SAI dela.
+            // FÍSICA: CURVA E FORÇA CENTRÍFUGA
             const segIdx = Math.floor(d.pos / CONF.SEGMENT_LENGTH);
             const seg = getSegment(segIdx);
             
-            // Força que joga o carro para fora
-            const centrifugal = -seg.curve * (speedRatio * speedRatio) * CONF.CENTRIFUGAL_FORCE * 1.5; // Mais forte
-            
-            // Força do jogador virando
-            const steerPower = 0.18 * charStats.turnInfo;
+            // A pista te joga para fora se você não curvar
+            const centrifugal = -seg.curve * (speedRatio * speedRatio) * CONF.CENTRIFUGAL_FORCE; 
+            const steerPower = 0.15 * charStats.turnInfo;
 
             d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
 
-            // Limites da pista (Parede invisível elástica)
+            // Paredes invisíveis
             if(d.playerX < -4.5) { d.playerX = -4.5; d.speed *= 0.95; }
             if(d.playerX > 4.5)  { d.playerX = 4.5;  d.speed *= 0.95; }
 
-            // LÓGICA DO SPIN (GIRO 360)
+            // --- LÓGICA DO SPIN-OUT (ROTAÇÃO DO SPRITE) ---
             if (Math.abs(d.spinVelocity) > 0.1) {
-                d.worldRotation += d.spinVelocity;
-                d.spinVelocity *= 0.92; // Desacelera o giro
-                // Snap para 0 se estiver quase parando
-                if (Math.abs(d.spinVelocity) < 0.5 && Math.abs(d.worldRotation % 360) < 10) {
-                     d.worldRotation = 0; d.spinVelocity = 0;
+                d.playerSpin += d.spinVelocity;
+                d.spinVelocity *= GAME_TUNING.spinFriction; // Atrito rotacional
+                
+                // Snap para 0 se parar de girar
+                if (Math.abs(d.spinVelocity) < 0.5) {
+                    d.playerSpin = d.playerSpin % 360; // Normaliza
+                    if (Math.abs(d.playerSpin) < 10 || Math.abs(d.playerSpin - 360) < 10) {
+                        d.playerSpin = 0;
+                        d.spinVelocity = 0;
+                    } else {
+                        // Continua girando devagar até alinhar ou volta
+                        d.spinVelocity = (d.playerSpin > 180 ? 2 : -2);
+                    }
                 }
             } else {
-                d.worldRotation = 0;
+                d.playerSpin = 0;
             }
 
             // COLISÕES COM OBSTÁCULOS
             seg.obs.forEach(o => {
                 if(o.x < 10 && Math.abs(d.playerX - o.x) < 0.35 && Math.abs(d.playerX) < 4.0) {
                     o.x = 999; // Remove obstáculo
-                    this.triggerSpin('BIG'); // GIRA O MUNDO!
+                    this.triggerCrash('BIG');
                 }
             });
 
-            // COLISÃO ENTRE JOGADORES (PVP)
+            // COLISÃO ENTRE JOGADORES (PVP/BOTS)
             d.rivals.forEach(r => {
                 let distZ = r.pos - d.pos;
                 if (distZ > trackLength / 2) distZ -= trackLength;
@@ -530,11 +522,16 @@
                 let distX = r.x - d.playerX;
 
                 if (Math.abs(distZ) < 300 && Math.abs(distX) < 0.6) {
-                    // Empurrão e giro leve
-                    const push = 0.12 * GAME_TUNING.collisionForce * (0.6 + speedRatio * 0.4);
-                    d.playerX -= (distX > 0 ? push : -push);
+                    // Batida!
+                    // Empurra os carros em direções opostas
+                    const pushForce = 0.15 * GAME_TUNING.collisionForce;
+                    const direction = distX > 0 ? -1 : 1; // Se rival está na direita, eu vou pra esquerda
                     
-                    this.triggerSpin('SMALL');
+                    d.playerX += direction * pushForce;
+                    
+                    // Inicia Spin leve
+                    this.triggerCrash('SMALL');
+                    d.spinVelocity = direction * 20; // Gira na direção da batida
                 }
             });
 
@@ -546,13 +543,14 @@
             }
             if (d.pos < 0) d.pos += trackLength;
 
-            // RIVAIS (SIMULAÇÃO)
+            // IA DOS RIVAIS
             let pAhead = 0;
             d.rivals.forEach(r => {
                 if (r.isRemote) {
                     r.pos += r.speed; 
                     if(r.pos >= trackLength) { r.pos -= trackLength; r.lap++; }
                 } else {
+                    // Bot Simples
                     let dist = r.pos - d.pos;
                     if(dist > trackLength/2) dist -= trackLength; if(dist < -trackLength/2) dist += trackLength;
                     let targetS = CONF.MAX_SPEED * 0.45;
@@ -561,7 +559,7 @@
                     if(r.pos >= trackLength) { r.pos -= trackLength; r.lap++; }
                     if(r.pos < 0) r.pos += trackLength;
                     const rSeg = getSegment(Math.floor(r.pos/CONF.SEGMENT_LENGTH));
-                    r.x += (-(rSeg.curve * 0.6) - r.x) * 0.05;
+                    r.x += (-(rSeg.curve * 0.6) - r.x) * 0.05; // Segue a pista suavemente
                 }
                 
                 let playerTotalDist = d.pos + (d.lap * trackLength);
@@ -585,21 +583,16 @@
             const currentSegIndex = Math.floor(d.pos / CONF.SEGMENT_LENGTH);
             const isOffRoad = Math.abs(d.playerX) > 2.2;
 
-            // 1. ROTAÇÃO GLOBAL (O SPIN DE BATIDA!)
+            // REMOVIDA A ROTAÇÃO GLOBAL QUE CAUSAVA O BUG "MUNDO DE CABEÇA PARA BAIXO"
+            // Agora o mundo é sempre fixo, apenas treme com o shakeScreen
             ctx.save();
-            if (Math.abs(d.worldRotation) > 0.1) {
-                // Rotaciona ao redor do centro da tela
-                ctx.translate(w/2, h/2);
-                ctx.rotate(d.worldRotation * Math.PI / 180);
-                ctx.translate(-w/2, -h/2);
-            }
-
+            
+            // Fundo e Céu
             const skyGrads = [['#3388ff', '#88ccff'], ['#e67e22', '#f1c40f'], ['#0984e3', '#74b9ff']];
             const currentSky = skyGrads[d.skyColor] || skyGrads[0];
             const gradSky = ctx.createLinearGradient(0, 0, 0, horizon);
             gradSky.addColorStop(0, currentSky[0]); gradSky.addColorStop(1, currentSky[1]);
-            // Desenha céu maior para cobrir rotação
-            ctx.fillStyle = gradSky; ctx.fillRect(-w, -h, w*3, h*3); 
+            ctx.fillStyle = gradSky; ctx.fillRect(0, 0, w, horizon);
 
             const bgOffset = (getSegment(currentSegIndex).curve * 30) + (d.steer * 20);
             ctx.fillStyle = d.skyColor === 0 ? '#44aa44' : (d.skyColor===1 ? '#d35400' : '#fff'); 
@@ -684,7 +677,6 @@
             }
             
             const playerColor = CHARACTERS[d.selectedChar].color;
-            // MANTÉM A FUNÇÃO ORIGINAL DE DESENHO DO KART
             this.drawKartSprite(ctx, cx, h*0.85 + d.bounce, w * 0.0055, d.steer, d.visualTilt, d, playerColor, false);
             
             particles.forEach((p, i) => { 
@@ -693,14 +685,20 @@
                 else { ctx.fillStyle=p.c; ctx.globalAlpha = p.l / 50; ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI*2); ctx.fill(); ctx.globalAlpha = 1.0; } 
             });
 
-            ctx.restore(); // Restaura rotação do mundo
+            ctx.restore();
         },
 
         drawKartSprite: function(ctx, cx, y, carScale, steer, tilt, d, color, isRival) {
             ctx.save(); 
             ctx.translate(cx, y); 
             ctx.scale(carScale, carScale);
-            ctx.rotate(tilt * 0.02 + (d.driftState === 1 ? d.driftDir * 0.3 : 0));
+            
+            // AQUI ESTÁ A CORREÇÃO DO SPIN:
+            // Soma a inclinação natural da curva + o ângulo de spin da batida
+            // Se for rival, não aplicamos a lógica de spin do player (para simplificar, ou poderia ter r.spin)
+            const rotation = tilt * 0.02 + (isRival ? 0 : (d.playerSpin * Math.PI / 180));
+            
+            ctx.rotate(rotation);
             
             ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.ellipse(0, 35, 60, 15, 0, 0, Math.PI*2); ctx.fill();
             
