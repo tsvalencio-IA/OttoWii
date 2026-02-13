@@ -1,5 +1,6 @@
 // =============================================================================
-// KART LEGENDS: GOLD EDITION (HIGH VISIBILITY + PREMIUM UI)
+// KART LEGENDS: PLATINUM REMASTER (VISUAL V3 + STABILITY V6)
+// CORREÇÕES: PISTA VISÍVEL, PERSPECTIVA LONGA, VOLANTE GT, SEM CRASH NO TURBO
 // =============================================================================
 
 (function() {
@@ -8,24 +9,24 @@
     // 1. CONFIGURAÇÕES VISUAIS & FÍSICA
     // -----------------------------------------------------------------
     const CONF = {
-        MAX_SPEED: 280,
-        TURBO_MAX_SPEED: 450,
-        ACCEL: 0.15,
+        MAX_SPEED: 260,
+        TURBO_MAX_SPEED: 420,
+        ACCEL: 0.12,
         BREAKING: 0.3,
-        DECEL: 0.03,
-        OFFROAD_DECEL: 0.12,
+        DECEL: 0.04,
+        OFFROAD_DECEL: 0.92,
         
-        // --- VISUAL SETTINGS (Perspectiva Longe) ---
+        // --- VISUAL (Perspectiva Panorâmica) ---
         SEGMENT_LENGTH: 200,
         RUMBLE_LENGTH: 3,
         ROAD_WIDTH: 2200,
         DRAW_DISTANCE: 300,  // Aumentado para ver longe
         FOV: 100,
-        CAMERA_HEIGHT: 1800, // Câmera mais alta (visão panorâmica)
-        CAMERA_DEPTH: 0.9,   // Zoom ajustado
+        CAMERA_HEIGHT: 1200, // Câmera mais alta para ver a curva longe
+        CAMERA_DEPTH: 0.8,   // Zoom ajustado para profundidade
         
         // --- PERFORMANCE ---
-        MAX_PARTICLES: 40    // Limite rígido para evitar crash no turbo
+        MAX_PARTICLES: 40    // Limite rígido para evitar crash
     };
 
     const CHARACTERS = [
@@ -34,7 +35,9 @@
         { id: 2, name: 'PEACH',  color: '#ff9ff3', hat: '#fd79a8', skin: '#ffccaa', stats: { speed: 0.96, grip: 1.1 } },
         { id: 3, name: 'BOWSER', color: '#f1c40f', hat: '#e67e22', skin: '#e67e22', stats: { speed: 1.15, grip: 0.7 } },
         { id: 4, name: 'TOAD',   color: '#3498db', hat: '#ecf0f1', skin: '#ffccaa', stats: { speed: 0.9, grip: 1.2 } },
-        { id: 5, name: 'YOSHI',  color: '#76ff03', hat: '#64dd17', skin: '#ffccaa', stats: { speed: 1.05, grip: 1.05 } }
+        { id: 5, name: 'YOSHI',  color: '#76ff03', hat: '#64dd17', skin: '#ffccaa', stats: { speed: 1.05, grip: 1.05 } },
+        { id: 6, name: 'DK',     color: '#795548', hat: '#5d4037', skin: '#ffccaa', stats: { speed: 1.12, grip: 0.8 } },
+        { id: 7, name: 'WARIO',  color: '#ffeb3b', hat: '#fbc02d', skin: '#ffccaa', stats: { speed: 1.08, grip: 0.85 } }
     ];
 
     const TRACKS = [
@@ -50,11 +53,10 @@
         state: 'INIT',
         
         // Multiplayer
-        roomId: 'kart_gold_v1',
+        roomId: 'kart_platinum_v1',
         isOnline: false,
         isHost: false,
         dbRef: null,
-        roomRef: null,
         remotePlayers: {},
         lastSync: 0,
         playerId: window.System ? window.System.playerId : 'P'+Math.floor(Math.random()*1000),
