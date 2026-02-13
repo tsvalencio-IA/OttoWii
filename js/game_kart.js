@@ -1,11 +1,11 @@
 /* =================================================================
-   KART LEGENDS: FINAL STABLE V6 (PARTICLE CRASH FIX)
+   KART LEGENDS: DIAMOND FIX (STABLE + RESTORED GRAPHICS)
    ================================================================= */
 
 (function() {
 
     // -----------------------------------------------------------------
-    // 1. CONSTANTES & CONFIGURAÇÕES
+    // 1. CONFIGURAÇÕES & ASSETS
     // -----------------------------------------------------------------
     const CONF = {
         MAX_SPEED: 260,
@@ -17,7 +17,7 @@
         SEGMENT_LENGTH: 200, 
         RUMBLE_LENGTH: 3,
         ROAD_WIDTH: 2000,
-        DRAW_DISTANCE: 150, 
+        DRAW_DISTANCE: 150, // Seguro para mobile
         FOV: 100,
         CAMERA_HEIGHT: 1000,
         CAMERA_DEPTH: 0.84
@@ -29,7 +29,9 @@
         { id: 2, name: 'PEACH',  color: '#ff9ff3', hat: '#fd79a8', skin: '#ffccaa', stats: { speed: 0.96, grip: 1.1 } },
         { id: 3, name: 'BOWSER', color: '#f1c40f', hat: '#e67e22', skin: '#e67e22', stats: { speed: 1.15, grip: 0.7 } },
         { id: 4, name: 'TOAD',   color: '#3498db', hat: '#ecf0f1', skin: '#ffccaa', stats: { speed: 0.9, grip: 1.2 } },
-        { id: 5, name: 'YOSHI',  color: '#76ff03', hat: '#64dd17', skin: '#ffccaa', stats: { speed: 1.05, grip: 1.05 } }
+        { id: 5, name: 'YOSHI',  color: '#76ff03', hat: '#64dd17', skin: '#ffccaa', stats: { speed: 1.05, grip: 1.05 } },
+        { id: 6, name: 'DK',     color: '#795548', hat: '#5d4037', skin: '#ffccaa', stats: { speed: 1.12, grip: 0.8 } },
+        { id: 7, name: 'WARIO',  color: '#ffeb3b', hat: '#fbc02d', skin: '#ffccaa', stats: { speed: 1.08, grip: 0.85 } }
     ];
 
     const TRACKS = [
@@ -42,10 +44,10 @@
     // 2. ENGINE LÓGICA
     // -----------------------------------------------------------------
     const Game = {
-        state: 'INIT',
+        state: 'INIT', // MENU, LOBBY, RACE, GAMEOVER
         
         // Multiplayer
-        roomId: 'kart_stable_v6',
+        roomId: 'kart_diamond_final',
         isOnline: false,
         dbRef: null,
         remotePlayers: {},
@@ -157,16 +159,26 @@
                 }
             };
 
-            // PISTA SIMPLIFICADA PARA EVITAR CRASH GEOMÉTRICO
+            // Traçados diferentes por pista
             if (this.selTrack === 0) { // Grand Prix
-                add(50, 50, 50, 0, 0); add(40, 40, 40, 4, 0);
-                add(50, 50, 50, -3, 0); add(50, 50, 50, 0, 0);
+                add(50, 50, 50, 0, 0); 
+                add(40, 40, 40, 4, 0);
+                add(60, 60, 60, -3, 20); 
+                add(40, 40, 40, -3, -20);
+                add(30, 30, 30, 6, 0);
+                add(50, 50, 50, 0, 0);
             } else if (this.selTrack === 1) { // Sunset
-                add(50, 50, 50, 0, 0); add(30, 80, 30, 5, 0);
-                add(30, 30, 30, -5, 0); add(50, 50, 50, 0, 0);
+                add(50, 50, 50, 0, 0);
+                add(30, 80, 30, 5, 0);
+                add(30, 30, 30, -5, 0);
+                add(10, 10, 10, 0, 40); // Pulo
+                add(50, 50, 50, 0, -40);
             } else { // Neon
-                add(50, 50, 50, 0, 0); add(20, 20, 20, 8, 0);
-                add(20, 20, 20, -8, 0); add(100, 100, 100, 0, 0);
+                add(50, 50, 50, 0, 0);
+                add(20, 20, 20, 8, 0);
+                add(20, 20, 20, -8, 0);
+                add(20, 20, 20, 8, 0);
+                add(100, 100, 100, 0, 0);
             }
 
             this.trackLength = this.segments.length * CONF.SEGMENT_LENGTH;
@@ -178,9 +190,9 @@
             let x = 0, z = 0, angle = 0;
             let minX=0, maxX=0, minZ=0, maxZ=0;
 
-            for(let i=0; i<this.segments.length; i+=5) {
+            for(let i=0; i<this.segments.length; i+=5) { // Amostragem menor para performance
                 const seg = this.segments[i];
-                angle += seg.curve * 0.015;
+                angle += seg.curve * 0.015; 
                 x += Math.sin(angle) * 50;
                 z += Math.cos(angle) * 50;
                 this.minimap.path.push({x, z});
@@ -202,7 +214,10 @@
             this.handleInput(pose, w, h, safeDt);
             this.physics(safeDt);
             
-            if (this.isOnline) this.syncNetwork();
+            if (this.isOnline) {
+                this.syncNetwork();
+                this.interpolateRemotes();
+            }
 
             this.render3D(ctx, w, h);
             this.renderHUD(ctx, w, h);
@@ -257,6 +272,7 @@
             if (Math.abs(this.playerX) > 1.2) { 
                 max *= 0.3;
                 this.spawnParticle((Math.random()-0.5)*40, 0, 'dust');
+                if(window.Gfx) window.Gfx.shakeScreen(2);
             }
 
             if(this.speed < max) this.speed += CONF.ACCEL * dt * 60;
@@ -281,32 +297,38 @@
                 const botSegIdx = Math.floor(bot.pos / CONF.SEGMENT_LENGTH) % this.segments.length;
                 const bSeg = this.segments[botSegIdx];
                 let bSpeed = bot.baseSpeed;
-                if(bot.speed < bSpeed) bot.speed += 2;
+                // IA Simplificada: segue curva
                 bot.pos += bot.speed * dt * 20;
-                bot.x += (-bSeg.curve * 0.6 - bot.x) * 0.05; // AI Steer
-                if(bot.pos >= this.trackLength) bot.pos -= this.trackLength;
+                bot.x += (-bSeg.curve * 0.6 - bot.x) * 0.05; 
+                
+                if(bot.pos >= this.trackLength) {
+                    bot.pos -= this.trackLength;
+                    bot.lap++;
+                }
             });
         },
 
-        // --- RENDER 3D ---
+        // --- RENDER 3D (BLINDADO) ---
         render3D: function(ctx, w, h) {
             const cx = w/2; const cy = h/2;
             const theme = TRACKS[this.selTrack];
 
-            // 1. Clear & Background
-            ctx.fillStyle = theme.sky[0]; ctx.fillRect(0,0,w,h/2);
+            // 1. Céu e Chão
+            const skyGrad = ctx.createLinearGradient(0,0,0,h/2);
+            skyGrad.addColorStop(0, theme.sky[0]); skyGrad.addColorStop(1, theme.sky[1]);
+            ctx.fillStyle = skyGrad; ctx.fillRect(0,0,w,h);
             ctx.fillStyle = theme.ground[0]; ctx.fillRect(0, h/2, w, h/2);
 
             let baseIdx = Math.floor(this.pos / CONF.SEGMENT_LENGTH);
             let camH = CONF.CAMERA_HEIGHT + this.segments[baseIdx % this.segments.length].p1.world.y;
-            if (this.isTurbo) camH += (Math.random()-0.5)*30;
+            if (this.isTurbo || Math.abs(this.playerX) > 1.2) camH += (Math.random()-0.5)*30;
 
             let x = 0, dx = 0; 
             let maxY = h; 
 
             let sprites = [];
 
-            // 2. Road Render
+            // 2. Loop de Pista (Z-Buffer Scanline)
             for (let n = 0; n < CONF.DRAW_DISTANCE; n++) {
                 const idx = (baseIdx + n) % this.segments.length;
                 const seg = this.segments[idx];
@@ -323,6 +345,7 @@
                 const p2y_rel = (seg.p2.world.y - camH);
                 const screenY2 = (h/2) - (prevScale * p2y_rel * h/2) / 1000;
 
+                // Otimização
                 if (screenY1 >= maxY || screenY2 < 0) continue; 
                 if(screenY1 < maxY) maxY = screenY1;
 
@@ -332,48 +355,62 @@
                 const screenX2 = cx + (-objX - x - dx) * prevScale * (w/2) / CONF.ROAD_WIDTH;
                 const screenW2 = CONF.ROAD_WIDTH * prevScale * (w/2) / CONF.ROAD_WIDTH;
 
+                // Armazena coords para sprites
                 seg.screen = { x: screenX1, y: screenY1, w: screenW1, scale: scale };
 
+                // Cores
                 const grass = seg.color === 'light' ? theme.ground[0] : theme.ground[1];
                 const road = seg.color === 'light' ? theme.road[0] : theme.road[1];
                 const rumble = seg.color === 'light' ? '#fff' : '#c00';
 
+                // Desenha Grama Lateral
+                ctx.fillStyle = grass;
+                ctx.fillRect(0, screenY2, w, (screenY1 - screenY2) + 1);
+
+                // Desenha Pista (Polígono Trapezoidal com Overlap +1 para não piscar)
                 const y1 = Math.floor(screenY1); 
                 const y2 = Math.floor(screenY2);
                 
                 if (y1 - y2 > 0) {
-                    ctx.fillStyle = grass;
-                    ctx.fillRect(0, y2, w, (y1-y2)+1); 
-
+                    // Estrada
                     this.drawPoly(ctx, road, screenX1-screenW1, y1, screenX1+screenW1, y1, screenX2+screenW2, y2, screenX2-screenW2, y2);
 
+                    // Zebra
                     const rW1 = screenW1 * 1.2; const rW2 = screenW2 * 1.2;
                     this.drawPoly(ctx, rumble, screenX1-rW1, y1, screenX1-screenW1, y1, screenX2-screenW2, y2, screenX2-rW2, y2);
                     this.drawPoly(ctx, rumble, screenX1+screenW1, y1, screenX1+rW1, y1, screenX2+rW2, y2, screenX2+screenW2, y2);
+                    
+                    // Faixa Central
+                    if (seg.color === 'light') {
+                        const lW1 = screenW1 * 0.02; const lW2 = screenW2 * 0.02;
+                        this.drawPoly(ctx, '#fff', screenX1-lW1, y1, screenX1+lW1, y1, screenX2+lW2, y2, screenX2-lW2, y2);
+                    }
                 }
             }
 
+            // 3. Sprites Collection
             this.collectSprites(baseIdx, sprites);
 
-            // 4. Draw Sprites
+            // 4. Desenha Sprites (Trás para frente)
             sprites.sort((a,b) => b.dist - a.dist);
             sprites.forEach(s => {
                 this.drawKartSprite(ctx, s.x, s.y, s.scale * 3500, 0, false, s.obj.charId, s.isRemote);
-                if(s.isRemote || s.obj.id !== undefined) {
-                     ctx.fillStyle = s.isRemote ? '#0ff' : '#ff0'; 
-                     ctx.font="bold 10px Arial"; ctx.textAlign="center";
-                     ctx.fillText(s.obj.name || "CPU", s.x, s.y - (s.scale*3500*0.04));
-                }
+                // Nome
+                ctx.fillStyle = s.isRemote ? '#0ff' : '#ff0'; 
+                ctx.font="bold 12px Arial"; ctx.textAlign="center";
+                ctx.fillText(s.obj.name || "CPU", s.x, s.y - (s.scale*3500*0.05));
             });
 
-            // Player
+            // 5. Player (Sempre na frente)
             const bounce = Math.abs(Math.sin(Date.now()/50)) * (this.speed/30);
             this.drawKartSprite(ctx, cx, h*0.88 - bounce + this.shake, 2.8, this.steer, this.isTurbo, this.selChar, false);
 
+            // Partículas
             this.renderParticles(ctx, w, h);
         },
 
         collectSprites: function(baseIdx, spritesArr) {
+            // Bots Locais
             for(let i=0; i<this.bots.length; i++) {
                 const bot = this.bots[i];
                 const botSeg = Math.floor(bot.pos / CONF.SEGMENT_LENGTH);
@@ -390,6 +427,7 @@
                 }
             }
             
+            // Remote Players
             Object.values(this.remotePlayers).forEach(p => {
                 const pSeg = Math.floor(p.pos / CONF.SEGMENT_LENGTH);
                 let rel = pSeg - baseIdx;
@@ -419,6 +457,7 @@
         drawKartSprite: function(ctx, x, y, size, steer, isTurbo, charId, isRemote) {
             const char = CHARACTERS[charId] || CHARACTERS[0];
             const s = size * 0.001 * (window.innerWidth/2);
+            
             if (s <= 0) return;
 
             ctx.save();
@@ -426,25 +465,31 @@
             ctx.scale(s, s);
             ctx.rotate(steer * 0.2);
 
+            // Sombra
             ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.beginPath(); ctx.ellipse(0, 20, 50, 12, 0, 0, Math.PI*2); ctx.fill();
+
+            // Pneus
             ctx.fillStyle = "#111"; ctx.fillRect(-45, -5, 18, 25); ctx.fillRect(27, -5, 18, 25);
 
+            // Chassi
             ctx.fillStyle = isRemote ? '#ccc' : char.color; 
             if(!isRemote) ctx.fillStyle = char.color;
-            
             ctx.beginPath();
             ctx.moveTo(-30, -25); ctx.lineTo(30, -25); ctx.lineTo(40, 10); ctx.lineTo(20, 30);
             ctx.lineTo(-20, 30); ctx.lineTo(-40, 10); ctx.fill();
 
+            // Turbo Flame
             if(isTurbo) {
                 ctx.fillStyle = (Math.random()>0.5)?"#ff0":"#f00";
                 ctx.beginPath(); ctx.moveTo(-8, 30); ctx.lineTo(8, 30); ctx.lineTo(0, 60+Math.random()*20); ctx.fill();
             }
 
+            // Driver
             ctx.fillStyle = char.skin; ctx.beginPath(); ctx.arc(0, -30, 18, 0, Math.PI*2); ctx.fill();
             ctx.fillStyle = char.hat; ctx.beginPath(); ctx.arc(0, -35, 19, Math.PI, 0); ctx.fill();
             ctx.fillRect(-20, -35, 40, 6);
 
+            // Rodas Frente (Giram)
             const wheelAngle = steer * 0.5;
             const dw = (ox) => {
                 ctx.save(); ctx.translate(ox, 10); ctx.rotate(wheelAngle);
@@ -453,6 +498,7 @@
             };
             dw(-42); dw(42);
 
+            // Volante
             ctx.fillStyle = "#333"; ctx.save(); ctx.translate(0, -10); ctx.rotate(steer);
             ctx.fillRect(-12, -2, 24, 4); ctx.restore();
 
@@ -460,25 +506,24 @@
         },
 
         spawnParticle: function(x, y, type) {
-            if (this.particles.length > 20) return; 
+            // Limite para evitar crash de memória
+            if (this.particles.length > 30) return;
             this.particles.push({x, y, vx:(Math.random()-0.5)*10, vy:-Math.random()*15, life:1.0, type});
         },
         
         renderParticles: function(ctx, w, h) {
-            // FIX: Filtra partículas mortas antes do loop
+            // FIX: Filtro para remover partículas mortas
             this.particles = this.particles.filter(p => p.life > 0);
             
             this.particles.forEach(p => {
                 p.x += p.vx; p.y += p.vy; p.life -= 0.05;
-                
-                // FIX: Se a vida cair para <= 0, não desenha (evita raio negativo)
                 if (p.life <= 0) return;
 
                 const px = w/2 + p.x; const py = h*0.88 + p.y;
                 ctx.globalAlpha = p.life;
                 ctx.fillStyle = p.type==='fire' ? '#ff0' : '#888';
                 
-                // FIX: Garante que o raio nunca seja negativo
+                // FIX: Math.max(0, ...) IMPEDE O ERRO IndexSizeError
                 const radius = Math.max(0, 8 * p.life);
                 if (radius > 0) {
                     ctx.beginPath(); ctx.arc(px, py, radius, 0, Math.PI*2); ctx.fill();
@@ -488,8 +533,9 @@
         },
 
         renderHUD: function(ctx, w, h) {
+            // MiniMapa
             if(this.minimap.path.length > 0) {
-                const ms = 100; const mx = 20; const my = 20;
+                const ms = 120; const mx = 20; const my = 20;
                 ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(mx, my, ms, ms);
                 
                 const sc = 0.5; 
@@ -509,10 +555,16 @@
                     const bp = getCoord(b.pos);
                     ctx.fillStyle = "#ff0"; ctx.beginPath(); ctx.arc(bp.x, bp.z, 15, 0, Math.PI*2); ctx.fill();
                 });
+                
+                Object.values(this.remotePlayers).forEach(p => {
+                    const pp = getCoord(p.pos);
+                    ctx.fillStyle = "#0ff"; ctx.beginPath(); ctx.arc(pp.x, pp.z, 20, 0, Math.PI*2); ctx.fill();
+                });
 
                 ctx.restore();
             }
 
+            // Volante GT
             if(this.wheel.active) {
                 const wx = this.wheel.x; const wy = this.wheel.y;
                 ctx.save(); ctx.translate(wx, wy); ctx.rotate(this.wheel.angle);
@@ -521,6 +573,7 @@
                 ctx.restore();
             }
 
+            // Mensagens
             this.hudMsgs.forEach(m => {
                 m.y--; m.l--;
                 ctx.fillStyle = m.c; ctx.strokeStyle="#000"; ctx.lineWidth=3;
@@ -530,6 +583,7 @@
             this.hudMsgs = this.hudMsgs.filter(m => m.l > 0);
         },
 
+        // --- UI MENUS ---
         uiMenu: function(ctx, w, h) {
             const grad = ctx.createLinearGradient(0,0,w,h);
             grad.addColorStop(0, '#e74c3c'); grad.addColorStop(1, '#f1c40f');
@@ -622,7 +676,10 @@
         startGame: function() {
             this.reset();
             this.buildTrack();
-            this.startSolo(); 
+            // FORÇA CRIAÇÃO DE BOTS SE FOR SOLO
+            if (!this.isOnline) {
+                this.startSolo();
+            }
             this.state = 'RACE';
             this.nitroEl.style.display = 'flex';
             this.msg("GO!", "#0f0");
@@ -630,10 +687,12 @@
 
         startSolo: function() {
             this.bots = [];
+            // Cria 3 adversários
             for(let i=0; i<3; i++) {
                 this.bots.push({
                     id: i,
                     charId: (this.selChar + 1 + i) % CHARACTERS.length,
+                    name: 'CPU ' + (i+1),
                     pos: (i+1) * 300,
                     x: (i%2===0 ? 0.4 : -0.4),
                     baseSpeed: 120 + (Math.random()*20),
@@ -668,9 +727,12 @@
                     lap: this.lap
                 });
             }
-        }
+        },
+        
+        interpolateRemotes: function() {}
     };
 
+    // Registrar o jogo no Sistema Principal
     if(window.System && window.System.registerGame) {
         window.System.registerGame('kart', 'Kart Legends', '🏎️', Game, { camOpacity: 0.1 });
     }
