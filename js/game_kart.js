@@ -1,5 +1,5 @@
 /* =================================================================
-   KART LEGENDS: STABLE EDITION V5 (ANTI-CRASH + BOTS FIX)
+   KART LEGENDS: FINAL STABLE V6 (PARTICLE CRASH FIX)
    ================================================================= */
 
 (function() {
@@ -17,7 +17,7 @@
         SEGMENT_LENGTH: 200, 
         RUMBLE_LENGTH: 3,
         ROAD_WIDTH: 2000,
-        DRAW_DISTANCE: 150, // Reduzido para garantir estabilidade mobile
+        DRAW_DISTANCE: 150, 
         FOV: 100,
         CAMERA_HEIGHT: 1000,
         CAMERA_DEPTH: 0.84
@@ -45,7 +45,7 @@
         state: 'INIT',
         
         // Multiplayer
-        roomId: 'kart_stable_v5',
+        roomId: 'kart_stable_v6',
         isOnline: false,
         dbRef: null,
         remotePlayers: {},
@@ -178,10 +178,9 @@
             let x = 0, z = 0, angle = 0;
             let minX=0, maxX=0, minZ=0, maxZ=0;
 
-            // Simplificação: Amostrar a cada 5 segmentos para o minimapa (performance)
             for(let i=0; i<this.segments.length; i+=5) {
                 const seg = this.segments[i];
-                angle += seg.curve * 0.015; // Ajuste acumulativo
+                angle += seg.curve * 0.015;
                 x += Math.sin(angle) * 50;
                 z += Math.cos(angle) * 50;
                 this.minimap.path.push({x, z});
@@ -289,7 +288,7 @@
             });
         },
 
-        // --- RENDER 3D (BLINDADO CONTRA CRASH) ---
+        // --- RENDER 3D ---
         render3D: function(ctx, w, h) {
             const cx = w/2; const cy = h/2;
             const theme = TRACKS[this.selTrack];
@@ -305,7 +304,6 @@
             let x = 0, dx = 0; 
             let maxY = h; 
 
-            // Sprites array flattened for performance
             let sprites = [];
 
             // 2. Road Render
@@ -317,31 +315,25 @@
                 
                 x += dx; dx += seg.curve;
 
-                // Simple Projection
                 const scale = CONF.CAMERA_DEPTH / (segmentZ/1000); 
                 const prevScale = CONF.CAMERA_DEPTH / ((segmentZ + CONF.SEGMENT_LENGTH)/1000); 
 
-                // Y
                 const p1y_rel = (seg.p1.world.y - camH);
                 const screenY1 = (h/2) - (scale * p1y_rel * h/2) / 1000;
                 const p2y_rel = (seg.p2.world.y - camH);
                 const screenY2 = (h/2) - (prevScale * p2y_rel * h/2) / 1000;
 
-                // Otimização: Ignora se fora da tela
                 if (screenY1 >= maxY || screenY2 < 0) continue; 
                 if(screenY1 < maxY) maxY = screenY1;
 
-                // X
                 const objX = this.playerX * CONF.ROAD_WIDTH;
                 const screenX1 = cx + (-objX - x) * scale * (w/2) / CONF.ROAD_WIDTH;
                 const screenW1 = CONF.ROAD_WIDTH * scale * (w/2) / CONF.ROAD_WIDTH;
                 const screenX2 = cx + (-objX - x - dx) * prevScale * (w/2) / CONF.ROAD_WIDTH;
                 const screenW2 = CONF.ROAD_WIDTH * prevScale * (w/2) / CONF.ROAD_WIDTH;
 
-                // Save screen coords for sprites
                 seg.screen = { x: screenX1, y: screenY1, w: screenW1, scale: scale };
 
-                // Draw (Integer coords + Overlap fix)
                 const grass = seg.color === 'light' ? theme.ground[0] : theme.ground[1];
                 const road = seg.color === 'light' ? theme.road[0] : theme.road[1];
                 const rumble = seg.color === 'light' ? '#fff' : '#c00';
@@ -351,7 +343,7 @@
                 
                 if (y1 - y2 > 0) {
                     ctx.fillStyle = grass;
-                    ctx.fillRect(0, y2, w, (y1-y2)+1); // +1 overlap
+                    ctx.fillRect(0, y2, w, (y1-y2)+1); 
 
                     this.drawPoly(ctx, road, screenX1-screenW1, y1, screenX1+screenW1, y1, screenX2+screenW2, y2, screenX2-screenW2, y2);
 
@@ -361,15 +353,13 @@
                 }
             }
 
-            // 3. Sprite Collection (Separado para evitar loop aninhado pesado)
             this.collectSprites(baseIdx, sprites);
 
-            // 4. Draw Sprites (Back to Front)
+            // 4. Draw Sprites
             sprites.sort((a,b) => b.dist - a.dist);
             sprites.forEach(s => {
                 this.drawKartSprite(ctx, s.x, s.y, s.scale * 3500, 0, false, s.obj.charId, s.isRemote);
                 if(s.isRemote || s.obj.id !== undefined) {
-                     // Nome do Bot/Player
                      ctx.fillStyle = s.isRemote ? '#0ff' : '#ff0'; 
                      ctx.font="bold 10px Arial"; ctx.textAlign="center";
                      ctx.fillText(s.obj.name || "CPU", s.x, s.y - (s.scale*3500*0.04));
@@ -384,14 +374,12 @@
         },
 
         collectSprites: function(baseIdx, spritesArr) {
-            // Bots
             for(let i=0; i<this.bots.length; i++) {
                 const bot = this.bots[i];
                 const botSeg = Math.floor(bot.pos / CONF.SEGMENT_LENGTH);
                 let rel = botSeg - baseIdx;
                 if(rel < 0) rel += this.segments.length;
                 
-                // Só processa se estiver visível
                 if(rel > 0 && rel < CONF.DRAW_DISTANCE) {
                     const idx = (baseIdx + rel) % this.segments.length;
                     const seg = this.segments[idx];
@@ -402,7 +390,6 @@
                 }
             }
             
-            // Remote Players (Mesma lógica)
             Object.values(this.remotePlayers).forEach(p => {
                 const pSeg = Math.floor(p.pos / CONF.SEGMENT_LENGTH);
                 let rel = pSeg - baseIdx;
@@ -423,8 +410,8 @@
             ctx.fillStyle = color;
             ctx.beginPath();
             ctx.moveTo(x1 | 0, y1);
-            ctx.lineTo(x2 | 0, y1); // Y1 é igual para topo (flat)
-            ctx.lineTo(x3 | 0, y2); // Y2 é igual para base
+            ctx.lineTo(x2 | 0, y1);
+            ctx.lineTo(x3 | 0, y2);
             ctx.lineTo(x4 | 0, y2);
             ctx.fill();
         },
@@ -432,8 +419,7 @@
         drawKartSprite: function(ctx, x, y, size, steer, isTurbo, charId, isRemote) {
             const char = CHARACTERS[charId] || CHARACTERS[0];
             const s = size * 0.001 * (window.innerWidth/2);
-            
-            if (s <= 0) return; // Proteção contra escala negativa
+            if (s <= 0) return;
 
             ctx.save();
             ctx.translate(x, y);
@@ -474,44 +460,51 @@
         },
 
         spawnParticle: function(x, y, type) {
-            if (this.particles.length > 20) return; // Limite hard de particulas
+            if (this.particles.length > 20) return; 
             this.particles.push({x, y, vx:(Math.random()-0.5)*10, vy:-Math.random()*15, life:1.0, type});
         },
+        
         renderParticles: function(ctx, w, h) {
+            // FIX: Filtra partículas mortas antes do loop
             this.particles = this.particles.filter(p => p.life > 0);
+            
             this.particles.forEach(p => {
                 p.x += p.vx; p.y += p.vy; p.life -= 0.05;
+                
+                // FIX: Se a vida cair para <= 0, não desenha (evita raio negativo)
+                if (p.life <= 0) return;
+
                 const px = w/2 + p.x; const py = h*0.88 + p.y;
                 ctx.globalAlpha = p.life;
                 ctx.fillStyle = p.type==='fire' ? '#ff0' : '#888';
-                ctx.beginPath(); ctx.arc(px, py, 8*p.life, 0, Math.PI*2); ctx.fill();
+                
+                // FIX: Garante que o raio nunca seja negativo
+                const radius = Math.max(0, 8 * p.life);
+                if (radius > 0) {
+                    ctx.beginPath(); ctx.arc(px, py, radius, 0, Math.PI*2); ctx.fill();
+                }
             });
             ctx.globalAlpha = 1.0;
         },
 
         renderHUD: function(ctx, w, h) {
             if(this.minimap.path.length > 0) {
-                // Desenhar apenas os pontos para economizar performance no mobile
                 const ms = 100; const mx = 20; const my = 20;
                 ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(mx, my, ms, ms);
                 
-                // Scale simples
                 const sc = 0.5; 
                 ctx.save();
                 ctx.translate(mx+ms/2, my+ms/2);
                 ctx.scale(sc, sc);
                 
-                // Players
                 const getCoord = (d) => {
-                    const i = Math.floor(d / (CONF.SEGMENT_LENGTH*5)) % this.minimap.path.length; // *5 pois amostramos a cada 5
+                    const i = Math.floor(d / (CONF.SEGMENT_LENGTH*5)) % this.minimap.path.length;
                     return this.minimap.path[i] || {x:0, z:0};
                 };
 
-                // Me
                 const me = getCoord(this.pos);
                 ctx.fillStyle = "#f00"; ctx.beginPath(); ctx.arc(me.x, me.z, 20, 0, Math.PI*2); ctx.fill();
 
-                // Bots
                 this.bots.forEach(b => {
                     const bp = getCoord(b.pos);
                     ctx.fillStyle = "#ff0"; ctx.beginPath(); ctx.arc(bp.x, bp.z, 15, 0, Math.PI*2); ctx.fill();
@@ -629,7 +622,7 @@
         startGame: function() {
             this.reset();
             this.buildTrack();
-            this.startSolo(); // FORÇA A CRIAÇÃO DE BOTS
+            this.startSolo(); 
             this.state = 'RACE';
             this.nitroEl.style.display = 'flex';
             this.msg("GO!", "#0f0");
@@ -637,7 +630,6 @@
 
         startSolo: function() {
             this.bots = [];
-            // Cria 3 adversários
             for(let i=0; i<3; i++) {
                 this.bots.push({
                     id: i,
