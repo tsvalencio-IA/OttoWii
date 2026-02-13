@@ -1,23 +1,23 @@
 /* =================================================================
-   KART LEGENDS: TITANIUM OPTIMIZED (STABLE MOBILE 60FPS)
+   KART LEGENDS: STABLE EDITION V5 (ANTI-CRASH + BOTS FIX)
    ================================================================= */
 
 (function() {
 
     // -----------------------------------------------------------------
-    // 1. CONSTANTES & ASSETS
+    // 1. CONSTANTES & CONFIGURAÇÕES
     // -----------------------------------------------------------------
     const CONF = {
         MAX_SPEED: 260,
         TURBO_MAX_SPEED: 420,
-        ACCEL: 0.12,
+        ACCEL: 0.1,
         BREAKING: 0.3,
         DECEL: 0.04,
         OFFROAD_DECEL: 0.15,
-        SEGMENT_LENGTH: 200,
+        SEGMENT_LENGTH: 200, 
         RUMBLE_LENGTH: 3,
         ROAD_WIDTH: 2000,
-        DRAW_DISTANCE: 180,  // OTIMIZADO PARA MOBILE (Antes 300)
+        DRAW_DISTANCE: 150, // Reduzido para garantir estabilidade mobile
         FOV: 100,
         CAMERA_HEIGHT: 1000,
         CAMERA_DEPTH: 0.84
@@ -45,7 +45,7 @@
         state: 'INIT',
         
         // Multiplayer
-        roomId: 'kart_stable_v1',
+        roomId: 'kart_stable_v5',
         isOnline: false,
         dbRef: null,
         remotePlayers: {},
@@ -98,7 +98,7 @@
                 display: 'none', alignItems: 'center', justifyContent: 'center',
                 color: '#fff', fontFamily: 'sans-serif', fontWeight: '900', fontSize: '18px',
                 textShadow: '0 2px 4px rgba(0,0,0,0.5)', cursor: 'pointer', zIndex: '1000',
-                userSelect: 'none', touchAction: 'manipulation', webkitTapHighlightColor: 'transparent'
+                userSelect: 'none', touchAction: 'manipulation'
             });
             btn.innerText = "NITRO";
             
@@ -157,16 +157,16 @@
                 }
             };
 
+            // PISTA SIMPLIFICADA PARA EVITAR CRASH GEOMÉTRICO
             if (this.selTrack === 0) { // Grand Prix
                 add(50, 50, 50, 0, 0); add(40, 40, 40, 4, 0);
-                add(60, 60, 60, -3, 20); add(40, 40, 40, -3, -20);
-                add(30, 30, 30, 6, 0); add(50, 50, 50, 0, 0);
+                add(50, 50, 50, -3, 0); add(50, 50, 50, 0, 0);
             } else if (this.selTrack === 1) { // Sunset
                 add(50, 50, 50, 0, 0); add(30, 80, 30, 5, 0);
-                add(30, 30, 30, -5, 0); add(10, 10, 10, 0, 40); add(50, 50, 50, 0, -40);
+                add(30, 30, 30, -5, 0); add(50, 50, 50, 0, 0);
             } else { // Neon
                 add(50, 50, 50, 0, 0); add(20, 20, 20, 8, 0);
-                add(20, 20, 20, -8, 0); add(20, 20, 20, 8, 0); add(100, 100, 100, 0, 0);
+                add(20, 20, 20, -8, 0); add(100, 100, 100, 0, 0);
             }
 
             this.trackLength = this.segments.length * CONF.SEGMENT_LENGTH;
@@ -178,9 +178,10 @@
             let x = 0, z = 0, angle = 0;
             let minX=0, maxX=0, minZ=0, maxZ=0;
 
-            for(let i=0; i<this.segments.length; i++) {
+            // Simplificação: Amostrar a cada 5 segmentos para o minimapa (performance)
+            for(let i=0; i<this.segments.length; i+=5) {
                 const seg = this.segments[i];
-                angle += seg.curve * 0.003; 
+                angle += seg.curve * 0.015; // Ajuste acumulativo
                 x += Math.sin(angle) * 50;
                 z += Math.cos(angle) * 50;
                 this.minimap.path.push({x, z});
@@ -197,15 +198,12 @@
             if (this.state === 'LOBBY') { this.uiLobby(ctx, w, h); return; }
             if (this.state === 'GAMEOVER') { this.uiGameOver(ctx, w, h); return; }
 
-            // Physics Safety: Cap DT to prevent physics explosion on lag
             const safeDt = Math.min(dt, 0.1);
 
             this.handleInput(pose, w, h, safeDt);
             this.physics(safeDt);
             
-            if (this.isOnline) {
-                this.syncNetwork();
-            }
+            if (this.isOnline) this.syncNetwork();
 
             this.render3D(ctx, w, h);
             this.renderHUD(ctx, w, h);
@@ -260,7 +258,6 @@
             if (Math.abs(this.playerX) > 1.2) { 
                 max *= 0.3;
                 this.spawnParticle((Math.random()-0.5)*40, 0, 'dust');
-                if(window.Gfx) window.Gfx.shakeScreen(2);
             }
 
             if(this.speed < max) this.speed += CONF.ACCEL * dt * 60;
@@ -280,39 +277,27 @@
                 else this.msg("VOLTA " + this.lap);
             }
 
-            this.bots.forEach(bot => this.updateBot(bot, dt));
+            // Bots Update
+            this.bots.forEach(bot => {
+                const botSegIdx = Math.floor(bot.pos / CONF.SEGMENT_LENGTH) % this.segments.length;
+                const bSeg = this.segments[botSegIdx];
+                let bSpeed = bot.baseSpeed;
+                if(bot.speed < bSpeed) bot.speed += 2;
+                bot.pos += bot.speed * dt * 20;
+                bot.x += (-bSeg.curve * 0.6 - bot.x) * 0.05; // AI Steer
+                if(bot.pos >= this.trackLength) bot.pos -= this.trackLength;
+            });
         },
 
-        updateBot: function(bot, dt) {
-            const botSegIdx = Math.floor(bot.pos / CONF.SEGMENT_LENGTH) % this.segments.length;
-            const seg = this.segments[botSegIdx];
-            
-            let targetSpeed = bot.baseSpeed;
-            if (this.pos > bot.pos - 1000 && this.pos < bot.pos + 1000) targetSpeed *= 1.1; 
-
-            if(bot.speed < targetSpeed) bot.speed += CONF.ACCEL * dt * 50;
-            else bot.speed *= 0.99;
-
-            bot.pos += bot.speed * dt * 20;
-            const targetX = -seg.curve * 0.6;
-            bot.x += (targetX - bot.x) * 0.05;
-
-            if(bot.pos >= this.trackLength) {
-                bot.pos -= this.trackLength;
-                bot.lap++;
-            }
-        },
-
-        // --- RENDER 3D (OPTIMIZED) ---
+        // --- RENDER 3D (BLINDADO CONTRA CRASH) ---
         render3D: function(ctx, w, h) {
             const cx = w/2; const cy = h/2;
             const theme = TRACKS[this.selTrack];
 
-            // 1. Céu e Chão (Fast Fill)
+            // 1. Clear & Background
             ctx.fillStyle = theme.sky[0]; ctx.fillRect(0,0,w,h/2);
             ctx.fillStyle = theme.ground[0]; ctx.fillRect(0, h/2, w, h/2);
 
-            // 2. Projeção
             let baseIdx = Math.floor(this.pos / CONF.SEGMENT_LENGTH);
             let camH = CONF.CAMERA_HEIGHT + this.segments[baseIdx % this.segments.length].p1.world.y;
             if (this.isTurbo) camH += (Math.random()-0.5)*30;
@@ -320,9 +305,10 @@
             let x = 0, dx = 0; 
             let maxY = h; 
 
+            // Sprites array flattened for performance
             let sprites = [];
 
-            // LOOP OTIMIZADO - REDUZIDO PARA MOBILE
+            // 2. Road Render
             for (let n = 0; n < CONF.DRAW_DISTANCE; n++) {
                 const idx = (baseIdx + n) % this.segments.length;
                 const seg = this.segments[idx];
@@ -331,100 +317,115 @@
                 
                 x += dx; dx += seg.curve;
 
-                // Projection Math
+                // Simple Projection
                 const scale = CONF.CAMERA_DEPTH / (segmentZ/1000); 
                 const prevScale = CONF.CAMERA_DEPTH / ((segmentZ + CONF.SEGMENT_LENGTH)/1000); 
 
-                // Y Coords
+                // Y
                 const p1y_rel = (seg.p1.world.y - camH);
                 const screenY1 = (h/2) - (scale * p1y_rel * h/2) / 1000;
                 const p2y_rel = (seg.p2.world.y - camH);
                 const screenY2 = (h/2) - (prevScale * p2y_rel * h/2) / 1000;
 
-                // Optimization: Skip rendering if below viewport or occluded
-                if (screenY1 >= maxY && n > 0) continue; 
+                // Otimização: Ignora se fora da tela
+                if (screenY1 >= maxY || screenY2 < 0) continue; 
                 if(screenY1 < maxY) maxY = screenY1;
 
-                // X Coords
+                // X
                 const objX = this.playerX * CONF.ROAD_WIDTH;
                 const screenX1 = cx + (-objX - x) * scale * (w/2) / CONF.ROAD_WIDTH;
                 const screenW1 = CONF.ROAD_WIDTH * scale * (w/2) / CONF.ROAD_WIDTH;
                 const screenX2 = cx + (-objX - x - dx) * prevScale * (w/2) / CONF.ROAD_WIDTH;
                 const screenW2 = CONF.ROAD_WIDTH * prevScale * (w/2) / CONF.ROAD_WIDTH;
 
+                // Save screen coords for sprites
                 seg.screen = { x: screenX1, y: screenY1, w: screenW1, scale: scale };
 
-                // Draw Segments (Integer Coords for Speed)
+                // Draw (Integer coords + Overlap fix)
                 const grass = seg.color === 'light' ? theme.ground[0] : theme.ground[1];
                 const road = seg.color === 'light' ? theme.road[0] : theme.road[1];
                 const rumble = seg.color === 'light' ? '#fff' : '#c00';
 
-                const y1 = Math.floor(screenY1); const y2 = Math.floor(screenY2);
-                const hSeg = y1 - y2;
+                const y1 = Math.floor(screenY1); 
+                const y2 = Math.floor(screenY2);
                 
-                if (hSeg > 0) {
+                if (y1 - y2 > 0) {
                     ctx.fillStyle = grass;
-                    ctx.fillRect(0, y2, w, hSeg);
+                    ctx.fillRect(0, y2, w, (y1-y2)+1); // +1 overlap
 
                     this.drawPoly(ctx, road, screenX1-screenW1, y1, screenX1+screenW1, y1, screenX2+screenW2, y2, screenX2-screenW2, y2);
 
                     const rW1 = screenW1 * 1.2; const rW2 = screenW2 * 1.2;
                     this.drawPoly(ctx, rumble, screenX1-rW1, y1, screenX1-screenW1, y1, screenX2-screenW2, y2, screenX2-rW2, y2);
                     this.drawPoly(ctx, rumble, screenX1+screenW1, y1, screenX1+rW1, y1, screenX2+rW2, y2, screenX2+screenW2, y2);
-                    
-                    if (seg.color === 'light') {
-                        ctx.fillStyle = '#fff';
-                        const lW1 = screenW1 * 0.02; const lW2 = screenW2 * 0.02;
-                        this.drawPoly(ctx, '#fff', screenX1-lW1, y1, screenX1+lW1, y1, screenX2+lW2, y2, screenX2-lW2, y2);
-                    }
                 }
-
-                // Collect Sprites
-                this.bots.forEach(bot => {
-                    const botSeg = Math.floor(bot.pos / CONF.SEGMENT_LENGTH);
-                    let rel = botSeg - baseIdx;
-                    if(rel < 0) rel += this.segments.length;
-                    if(rel === n) {
-                        const spriteX = screenX1 + (bot.x * screenW1);
-                        sprites.push({ type: 'kart', obj: bot, x: spriteX, y: y1, scale: scale, dist: n });
-                    }
-                });
-
-                Object.values(this.remotePlayers).forEach(p => {
-                    const pSeg = Math.floor(p.pos / CONF.SEGMENT_LENGTH);
-                    let rel = pSeg - baseIdx;
-                    if(rel < 0) rel += this.segments.length;
-                    if(rel === n) {
-                        const spriteX = screenX1 + (p.x * screenW1);
-                        const mockObj = { charId: p.charId || 0, name: p.name || 'P2' };
-                        sprites.push({ type: 'kart', obj: mockObj, x: spriteX, y: y1, scale: scale, dist: n, isRemote: true });
-                    }
-                });
             }
 
+            // 3. Sprite Collection (Separado para evitar loop aninhado pesado)
+            this.collectSprites(baseIdx, sprites);
+
+            // 4. Draw Sprites (Back to Front)
             sprites.sort((a,b) => b.dist - a.dist);
             sprites.forEach(s => {
-                const isR = s.isRemote;
-                this.drawKartSprite(ctx, s.x, s.y, s.scale * 3500, 0, false, s.obj.charId, isR);
-                if(isR) {
-                     ctx.fillStyle = '#0f0'; ctx.font="bold 12px Arial"; ctx.textAlign="center";
-                     ctx.fillText(s.obj.name, s.x, s.y - (s.scale*3500*0.04));
+                this.drawKartSprite(ctx, s.x, s.y, s.scale * 3500, 0, false, s.obj.charId, s.isRemote);
+                if(s.isRemote || s.obj.id !== undefined) {
+                     // Nome do Bot/Player
+                     ctx.fillStyle = s.isRemote ? '#0ff' : '#ff0'; 
+                     ctx.font="bold 10px Arial"; ctx.textAlign="center";
+                     ctx.fillText(s.obj.name || "CPU", s.x, s.y - (s.scale*3500*0.04));
                 }
             });
 
+            // Player
             const bounce = Math.abs(Math.sin(Date.now()/50)) * (this.speed/30);
             this.drawKartSprite(ctx, cx, h*0.88 - bounce + this.shake, 2.8, this.steer, this.isTurbo, this.selChar, false);
 
             this.renderParticles(ctx, w, h);
         },
 
+        collectSprites: function(baseIdx, spritesArr) {
+            // Bots
+            for(let i=0; i<this.bots.length; i++) {
+                const bot = this.bots[i];
+                const botSeg = Math.floor(bot.pos / CONF.SEGMENT_LENGTH);
+                let rel = botSeg - baseIdx;
+                if(rel < 0) rel += this.segments.length;
+                
+                // Só processa se estiver visível
+                if(rel > 0 && rel < CONF.DRAW_DISTANCE) {
+                    const idx = (baseIdx + rel) % this.segments.length;
+                    const seg = this.segments[idx];
+                    if(seg.screen) {
+                        const spriteX = seg.screen.x + (bot.x * seg.screen.w);
+                        spritesArr.push({ type: 'kart', obj: bot, x: spriteX, y: seg.screen.y, scale: seg.screen.scale, dist: rel });
+                    }
+                }
+            }
+            
+            // Remote Players (Mesma lógica)
+            Object.values(this.remotePlayers).forEach(p => {
+                const pSeg = Math.floor(p.pos / CONF.SEGMENT_LENGTH);
+                let rel = pSeg - baseIdx;
+                if(rel < 0) rel += this.segments.length;
+                if(rel > 0 && rel < CONF.DRAW_DISTANCE) {
+                    const idx = (baseIdx + rel) % this.segments.length;
+                    const seg = this.segments[idx];
+                    if(seg.screen) {
+                        const spriteX = seg.screen.x + (p.x * seg.screen.w);
+                        const mockObj = { charId: p.charId || 0, name: p.name || 'P2' };
+                        spritesArr.push({ type: 'kart', obj: mockObj, x: spriteX, y: seg.screen.y, scale: seg.screen.scale, dist: rel, isRemote: true });
+                    }
+                }
+            });
+        },
+
         drawPoly: function(ctx, color, x1, y1, x2, y2, x3, y3, x4, y4) {
             ctx.fillStyle = color;
             ctx.beginPath();
-            ctx.moveTo(x1 | 0, y1 | 0);
-            ctx.lineTo(x2 | 0, y2 | 0);
-            ctx.lineTo(x3 | 0, y3 | 0);
-            ctx.lineTo(x4 | 0, y4 | 0);
+            ctx.moveTo(x1 | 0, y1);
+            ctx.lineTo(x2 | 0, y1); // Y1 é igual para topo (flat)
+            ctx.lineTo(x3 | 0, y2); // Y2 é igual para base
+            ctx.lineTo(x4 | 0, y2);
             ctx.fill();
         },
 
@@ -432,6 +433,8 @@
             const char = CHARACTERS[charId] || CHARACTERS[0];
             const s = size * 0.001 * (window.innerWidth/2);
             
+            if (s <= 0) return; // Proteção contra escala negativa
+
             ctx.save();
             ctx.translate(x, y);
             ctx.scale(s, s);
@@ -471,8 +474,7 @@
         },
 
         spawnParticle: function(x, y, type) {
-            // Limitar particulas para performance
-            if (this.particles.length > 30) return;
+            if (this.particles.length > 20) return; // Limite hard de particulas
             this.particles.push({x, y, vx:(Math.random()-0.5)*10, vy:-Math.random()*15, life:1.0, type});
         },
         renderParticles: function(ctx, w, h) {
@@ -489,43 +491,30 @@
 
         renderHUD: function(ctx, w, h) {
             if(this.minimap.path.length > 0) {
-                const ms = 130; const mx = 20; const my = 20;
-                ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(mx, my, ms, ms);
-                ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(mx, my, ms, ms);
+                // Desenhar apenas os pontos para economizar performance no mobile
+                const ms = 100; const mx = 20; const my = 20;
+                ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(mx, my, ms, ms);
                 
+                // Scale simples
+                const sc = 0.5; 
                 ctx.save();
-                ctx.beginPath(); ctx.rect(mx, my, ms, ms); ctx.clip();
-                
-                const mapW = this.minimap.maxX - this.minimap.minX;
-                const mapH = this.minimap.maxZ - this.minimap.minZ;
-                const scale = Math.min((ms-20)/mapW, (ms-20)/mapH);
-                
                 ctx.translate(mx+ms/2, my+ms/2);
-                ctx.scale(scale, scale);
-                ctx.translate(-(this.minimap.minX+this.minimap.maxX)/2, -(this.minimap.minZ+this.minimap.maxZ)/2);
+                ctx.scale(sc, sc);
                 
-                ctx.strokeStyle = TRACKS[this.selTrack].mapColor || '#888'; 
-                ctx.lineWidth = 20; ctx.lineJoin = 'round';
-                ctx.beginPath();
-                this.minimap.path.forEach((p, i) => { if(i===0) ctx.moveTo(p.x, p.z); else ctx.lineTo(p.x, p.z); });
-                ctx.closePath(); ctx.stroke();
-                
+                // Players
                 const getCoord = (d) => {
-                    const i = Math.floor(d / CONF.SEGMENT_LENGTH) % this.minimap.path.length;
+                    const i = Math.floor(d / (CONF.SEGMENT_LENGTH*5)) % this.minimap.path.length; // *5 pois amostramos a cada 5
                     return this.minimap.path[i] || {x:0, z:0};
                 };
 
+                // Me
                 const me = getCoord(this.pos);
-                ctx.fillStyle = "#f00"; ctx.beginPath(); ctx.arc(me.x, me.z, 25, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = "#f00"; ctx.beginPath(); ctx.arc(me.x, me.z, 20, 0, Math.PI*2); ctx.fill();
 
+                // Bots
                 this.bots.forEach(b => {
                     const bp = getCoord(b.pos);
-                    ctx.fillStyle = "#ff0"; ctx.beginPath(); ctx.arc(bp.x, bp.z, 20, 0, Math.PI*2); ctx.fill();
-                });
-
-                Object.values(this.remotePlayers).forEach(p => {
-                    const pp = getCoord(p.pos);
-                    ctx.fillStyle = "#0ff"; ctx.beginPath(); ctx.arc(pp.x, pp.z, 20, 0, Math.PI*2); ctx.fill();
+                    ctx.fillStyle = "#ff0"; ctx.beginPath(); ctx.arc(bp.x, bp.z, 15, 0, Math.PI*2); ctx.fill();
                 });
 
                 ctx.restore();
@@ -534,7 +523,7 @@
             if(this.wheel.active) {
                 const wx = this.wheel.x; const wy = this.wheel.y;
                 ctx.save(); ctx.translate(wx, wy); ctx.rotate(this.wheel.angle);
-                ctx.strokeStyle="#333"; ctx.lineWidth=12; ctx.beginPath(); ctx.arc(0,0,50,0,Math.PI*2); ctx.stroke();
+                ctx.strokeStyle="#333"; ctx.lineWidth=10; ctx.beginPath(); ctx.arc(0,0,50,0,Math.PI*2); ctx.stroke();
                 ctx.strokeStyle="#f00"; ctx.beginPath(); ctx.arc(0,0,50,-0.4,0.4); ctx.stroke();
                 ctx.restore();
             }
@@ -640,22 +629,25 @@
         startGame: function() {
             this.reset();
             this.buildTrack();
+            this.startSolo(); // FORÇA A CRIAÇÃO DE BOTS
             this.state = 'RACE';
             this.nitroEl.style.display = 'flex';
             this.msg("GO!", "#0f0");
+        },
 
-            if (!this.isOnline) {
-                for(let i=0; i<3; i++) {
-                    this.bots.push({
-                        id: i,
-                        charId: (this.selChar + 1 + i) % CHARACTERS.length,
-                        pos: (i+1) * 300,
-                        x: (i%2===0 ? 0.5 : -0.5),
-                        baseSpeed: 100 + (Math.random()*20),
-                        speed: 0,
-                        lap: 1
-                    });
-                }
+        startSolo: function() {
+            this.bots = [];
+            // Cria 3 adversários
+            for(let i=0; i<3; i++) {
+                this.bots.push({
+                    id: i,
+                    charId: (this.selChar + 1 + i) % CHARACTERS.length,
+                    pos: (i+1) * 300,
+                    x: (i%2===0 ? 0.4 : -0.4),
+                    baseSpeed: 120 + (Math.random()*20),
+                    speed: 0,
+                    lap: 1
+                });
             }
         },
         
@@ -665,9 +657,7 @@
             if(window.System) window.System.gameOver("FINAL!");
         },
 
-        uiGameOver: function(ctx, w, h) {
-            // Renderizado pelo core
-        },
+        uiGameOver: function(ctx, w, h) {},
 
         msg: function(t, c='#fff') {
             this.hudMsgs.push({t, c, y: window.innerHeight/2, l: 60});
@@ -686,9 +676,7 @@
                     lap: this.lap
                 });
             }
-        },
-        
-        interpolateRemotes: function(dt) {}
+        }
     };
 
     if(window.System && window.System.registerGame) {
