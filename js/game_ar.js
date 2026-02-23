@@ -1,166 +1,161 @@
 // =============================================================================
-// USR AR COLLECTOR V6 - PLATINUM EDITION (NINTENDO/SONY LEVEL)
-// FOTO DO CAMINHÃO, OFICINA ANIMADA, GPS FOCADO E CONFIRMAÇÃO FÍSICA
+// AR TOY TRUCK SIMULATOR: MASTER ARCHITECT EDITION (V10)
+// JOGO COMPLETO: GPS VIRTUAL, ECONOMIA, EVENTOS DINÂMICOS, IA SEGURA
 // =============================================================================
 
 (function() {
     "use strict";
 
     let particles = [];
-    let time = 0;
-
+    
     const Game = {
-        state: 'BOOT', // BOOT, SETUP_TRUCK, SCANNING, CONFIRMING, ANALYZING, RETURNING, UNLOADING, SHOP
+        state: 'BOOT', // BOOT, CALIBRATE, PLAY, EXTRACTING, BASE, TOWING
+        
+        // Sistema de Tempo Real e Segurança
+        lastTime: 0,
+        timeTotal: 0,
         score: 0,
         
-        // IA Visual e Radares
+        // IA Visual e Sensores
         objectModel: null,
         detectedItems: [],
         lastDetectTime: 0,
         floorColor: { r: 0, g: 0, b: 0 },
         targetColor: { r: 0, g: 0, b: 0 },
-        currentDiff: 0,
         
-        // Foto do Caminhão
-        truckSnapshot: null, // Canvas com a foto
+        // GPS Virtual (Odometria Relativa Imune a Falhas de Sinal)
+        vPos: { x: 0, y: 0 },
+        baseHeading: 0,
+        currentHeading: 0,
+        virtualSpeed: 0,
         
-        // Mecânica de Captura e Confirmação
-        scanProgress: 0,
-        targetItem: null,
-        graceTimer: 0, 
+        // Elementos Dinâmicos do Mundo
+        anomalies: [], 
+        activeAnomaly: null,
+        spawnTimer: 0,
+        
+        // Sistema de Eventos Aleatórios
+        currentEvent: null,
+        eventTimer: 0,
+        
+        // Extração Física
+        extractProgress: 0,
         cooldown: 0,
-        truckMoveEnergy: 0, 
-        currentReward: 0,   
         
-        // GPS e Navegação
-        basePos: { lat: null, lng: null },
-        currentPos: { lat: null, lng: null },
-        distanceToBase: 999,
-        gpsWatcher: null,
-        compassHeading: 0,
-        returnTimer: 0, 
+        // Economia, Inventário e Progressão
+        money: 0,
+        cargo: [],
+        level: 1,
+        xp: 0,
         
-        // Inventário e Progressão
-        cargo: null,
-        itemsRecovered: 0,
-        moneyEarned: 0, 
+        // Status do Caminhão
+        fuel: 100,
+        wear: { motor: 0, wheels: 0 }, 
         
-        // Sistema de Upgrades (A Garagem)
-        upgrades: {
-            motor: { level: 1, max: 5, cost: 1000, name: "MOTOR TRATOR", desc: "Extração mais rápida" },
-            pneus: { level: 1, max: 5, cost: 800,  name: "PNEUS OFF-ROAD", desc: "Mira mais estável" },
-            oleo:  { level: 1, max: 5, cost: 500,  name: "ÓLEO PREMIUM", desc: "Bónus de Dinheiro (+10%)" }
+        // Atributos baseados em Upgrades
+        stats: {
+            maxFuel: 100,
+            maxCargo: 3,
+            baseSpeed: 20,     
+            fuelRate: 1.5,     
+            wearRate: 0.3,     
+            scanPower: 1.0,    
+            radarRange: 150    
         },
 
-        // Estética
-        colorMain: '#00ffff', 
-        colorDanger: '#ff003c', 
-        colorSuccess: '#00ff66', 
-        colorShop: '#f39c12',
+        // Loja de Upgrades
+        upgrades: {
+            tank:    { lvl: 1, max: 5, baseCost: 1000, name: "TANQUE EXPANDIDO" },
+            motor:   { lvl: 1, max: 5, baseCost: 1500, name: "MOTOR DE TITÂNIO" },
+            chassis: { lvl: 1, max: 5, baseCost: 1200, name: "CHASSI REFORÇADO" },
+            scanner: { lvl: 1, max: 5, baseCost: 2000, name: "RADAR QUÂNTICO" },
+            cargo:   { lvl: 1, max: 3, baseCost: 2500, name: "CAÇAMBA EXTRA" }
+        },
 
-        init: function(faseData) {
+        colors: {
+            main: '#00ffff', danger: '#ff003c', success: '#00ff66',
+            warn: '#f1c40f', panel: 'rgba(5, 10, 20, 0.85)', rare: '#9b59b6'
+        },
+
+        init: function() {
             this.state = 'BOOT';
+            this.lastTime = performance.now();
+            this.timeTotal = 0;
             this.score = 0;
-            this.itemsRecovered = 0;
-            this.moneyEarned = 0;
-            this.cargo = null;
-            this.scanProgress = 0;
-            this.truckMoveEnergy = 0;
-            this.truckSnapshot = null;
-            particles = [];
-            time = 0;
             
-            this.startSensors();
+            this.vPos = { x: 0, y: 0 };
+            this.fuel = this.stats.maxFuel;
+            this.wear = { motor: 0, wheels: 0 };
+            this.money = 0;
+            this.xp = 0;
+            this.level = 1;
+            this.cargo = [];
+            this.anomalies = [];
+            this.currentEvent = null;
+            particles = [];
+            
+            this.setupSensors();
             this.setupInput();
             this.loadAIModel();
         },
 
-        startSensors: function() {
-            window.addEventListener('deviceorientation', (event) => {
-                this.compassHeading = event.alpha || 0;
+        setupSensors: function() {
+            window.addEventListener('deviceorientation', (e) => {
+                this.currentHeading = e.alpha || 0;
             });
             
-            window.addEventListener('devicemotion', (event) => {
-                if (this.state === 'CONFIRMING') {
-                    let acc = event.acceleration || event.accelerationIncludingGravity;
-                    if(acc && acc.y !== null) {
-                        let moveForce = Math.max(Math.abs(acc.y), Math.abs(acc.z));
-                        if (moveForce > 1.5) this.truckMoveEnergy += (moveForce * 1.5);
-                    }
+            window.addEventListener('devicemotion', (e) => {
+                let acc = e.acceleration || e.accelerationIncludingGravity;
+                if (!acc) return;
+                
+                let mag = Math.sqrt((acc.x||0)*(acc.x||0) + (acc.y||0)*(acc.y||0) + (acc.z||0)*(acc.z||0));
+                let g = e.acceleration ? 0 : 9.81;
+                let force = Math.abs(mag - g);
+                
+                // O próprio ruído/vibração do motorzinho do caminhão gera uma pequena força contínua
+                if (force > 0.3) {
+                    this.virtualSpeed = Math.min(this.virtualSpeed + (force * 3), this.stats.baseSpeed);
+                } else {
+                    this.virtualSpeed = Math.max(this.virtualSpeed - 0.5, 0);
                 }
             });
-        },
-
-        // Tira uma foto real do vídeo e salva no canvas interno
-        takeTruckSnapshot: function(w, h) {
-            if (!window.System.video) return;
-            const canvas = document.createElement('canvas');
-            canvas.width = w; canvas.height = h;
-            const ctx = canvas.getContext('2d');
-            
-            const videoRatio = window.System.video.videoWidth / window.System.video.videoHeight;
-            const canvasRatio = w / h;
-            let drawW = w, drawH = h, drawX = 0, drawY = 0;
-            if (videoRatio > canvasRatio) { drawW = h * videoRatio; drawX = (w - drawW) / 2; } 
-            else { drawH = w / videoRatio; drawY = (h - drawH) / 2; }
-            
-            ctx.drawImage(window.System.video, drawX, drawY, drawW, drawH);
-            this.truckSnapshot = canvas;
         },
 
         setupInput: function() {
             window.System.canvas.onclick = (e) => {
                 const r = window.System.canvas.getBoundingClientRect();
-                const x = (e.clientX - r.left); const y = (e.clientY - r.top);
+                const x = e.clientX - r.left; const y = e.clientY - r.top;
                 const w = r.width; const h = r.height;
 
-                if (this.state === 'SETUP_TRUCK') {
-                    // Tira a foto e marca o GPS!
-                    this.takeTruckSnapshot(w, h);
-                    this.setupGPS();
-                    this.state = 'SCANNING';
+                if (this.state === 'CALIBRATE') {
+                    this.baseHeading = this.currentHeading;
+                    this.setupGPS(); // Inicia o GPS Virtual
+                    this.state = 'PLAY';
                     if(window.Sfx) window.Sfx.epic();
-                    window.System.msg("FROTA REGISTRADA!");
-                } 
-                else if (this.state === 'SCANNING') {
-                    if (x > w - 120 && y < 80) {
-                        this.state = 'SHOP';
-                        if(window.Sfx) window.Sfx.click();
-                    }
+                    window.System.msg("SISTEMAS ONLINE. BOA CAÇADA!");
                 }
-                else if (this.state === 'SHOP') {
-                    const cx = w / 2;
-                    if (x > cx - 100 && x < cx + 100 && y > h*0.85 && y < h*0.85 + 50) {
-                        this.state = 'SCANNING';
-                        if(window.Sfx) window.Sfx.click();
-                        return;
-                    }
-                    
-                    const checkBuy = (upgKey, btnY) => {
-                        if (x > cx - 150 && x < cx + 150 && y > btnY && y < btnY + 60) {
-                            let upg = this.upgrades[upgKey];
-                            if (upg.level < upg.max && this.moneyEarned >= upg.cost) {
-                                this.moneyEarned -= upg.cost;
-                                upg.level++;
-                                upg.cost = Math.floor(upg.cost * 1.5);
-                                if(window.Sfx) window.Sfx.coin();
-                                this.spawnUpgradeAnimation(cx, btnY, upgKey);
-                                window.System.msg(upg.name + " ATUALIZADO!");
-                            } else {
-                                if(window.Sfx) window.Sfx.error();
-                            }
-                        }
-                    };
+                else if (this.state === 'PLAY') {
+                    // Impulso manual caso o devicemotion falhe no dispositivo
+                    this.virtualSpeed = Math.min(this.virtualSpeed + 5, this.stats.baseSpeed);
 
-                    checkBuy('motor', h*0.35); checkBuy('pneus', h*0.50); checkBuy('oleo', h*0.65);
+                    // Botão da Base
+                    let distToBase = Math.hypot(this.vPos.x, this.vPos.y);
+                    if (distToBase < 25 && y > h - 100 && x > w/2 - 100 && x < w/2 + 100) {
+                        this.state = 'BASE';
+                        this.virtualSpeed = 0;
+                        if(window.Sfx) window.Sfx.play(400, 'square', 0.5, 0.2);
+                        this.deliverCargo();
+                    }
                 }
-                else if (this.state === 'RETURNING') {
-                    // Botão para descarregar na marra se o GPS falhar
-                    if (y > h - 150) this.startUnloading();
+                else if (this.state === 'BASE') {
+                    this.handleBaseClicks(x, y, w, h);
                 }
-                else if (this.state === 'UNLOADING') {
-                    // Clique para pular a animação de descarga se quiser
-                    if (this.returnTimer < 100) this.finishDelivery();
+                else if (this.state === 'TOWING') {
+                    if (y > h/2) {
+                        this.state = 'BASE';
+                        this.fuel = this.stats.maxFuel;
+                        this.cargo = []; 
+                    }
                 }
             };
         },
@@ -171,517 +166,529 @@
                 script.src = "https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd";
                 document.head.appendChild(script);
                 script.onload = async () => {
-                    this.objectModel = await cocoSsd.load();
-                    this.state = 'SETUP_TRUCK';
-                    if(window.Sfx) window.Sfx.play(800, 'square', 0.5, 0.2);
+                    this.objectModel = await cocoSsd.load().catch(()=>null);
+                    this.state = 'CALIBRATE';
                 };
             } else {
-                this.objectModel = await cocoSsd.load();
-                this.state = 'SETUP_TRUCK';
+                this.objectModel = await cocoSsd.load().catch(()=>null);
+                this.state = 'CALIBRATE';
             }
         },
 
+        // Agora não usa GPS real. Cria um marco zero virtual local.
         setupGPS: function() {
-            if ("geolocation" in navigator) {
-                navigator.geolocation.getCurrentPosition((pos) => {
-                    this.basePos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-                    this.gpsWatcher = navigator.geolocation.watchPosition((newPos) => {
-                        this.currentPos = { lat: newPos.coords.latitude, lng: newPos.coords.longitude };
-                        this.distanceToBase = this.calculateDistance(this.basePos.lat, this.basePos.lng, this.currentPos.lat, this.currentPos.lng);
-                    }, null, { enableHighAccuracy: true });
-                }, () => {
-                    this.basePos = { lat: 0, lng: 0 }; this.distanceToBase = 0;
-                });
-            }
+            this.vPos = { x: 0, y: 0 };
+            this.spawnAnomalies(5); 
         },
 
-        calculateDistance: function(lat1, lon1, lat2, lon2) {
-            const R = 6371e3;
-            const p1 = lat1 * Math.PI/180; const p2 = lat2 * Math.PI/180;
-            const dp = (lat2-lat1) * Math.PI/180; const dl = (lon2-lon1) * Math.PI/180;
-            const a = Math.sin(dp/2) * Math.sin(dp/2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl/2) * Math.sin(dl/2);
-            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        },
-
+        // ==========================================
+        // MAIN LOOP (SEGURO E ESCALÁVEL)
+        // ==========================================
         update: function(ctx, w, h, pose) {
-            time += 0.05;
+            const now = performance.now();
+            let dt = (now - this.lastTime) / 1000;
+            if (isNaN(dt) || dt > 0.1 || dt < 0) dt = 0.016; 
+            this.lastTime = now;
+            this.timeTotal += dt;
 
-            // Renderiza o fundo do mundo (Câmera) APENAS SE não estiver na Oficina
-            if (this.state !== 'SHOP' && this.state !== 'UNLOADING') {
+            if (this.state !== 'BASE' && this.state !== 'TOWING') {
                 if (window.System.video && window.System.video.readyState === 4) {
                     const videoRatio = window.System.video.videoWidth / window.System.video.videoHeight;
                     const canvasRatio = w / h;
                     let drawW = w, drawH = h, drawX = 0, drawY = 0;
                     if (videoRatio > canvasRatio) { drawW = h * videoRatio; drawX = (w - drawW) / 2; } 
                     else { drawH = w / videoRatio; drawY = (h - drawH) / 2; }
+                    
+                    // Se houver evento de Glitch, distorce a câmera
+                    if (this.currentEvent === 'GLITCH') {
+                        drawX += (Math.random() - 0.5) * 20;
+                        drawY += (Math.random() - 0.5) * 20;
+                        ctx.filter = `hue-rotate(${Math.random()*360}deg)`;
+                    }
+                    
                     ctx.drawImage(window.System.video, drawX, drawY, drawW, drawH);
+                    ctx.filter = 'none';
                 } else {
                     ctx.fillStyle = '#050505'; ctx.fillRect(0, 0, w, h);
                 }
-                // Scanlines
-                ctx.fillStyle = "rgba(0, 0, 0, 0.1)";
-                for(let i = 0; i < h; i += 4) { ctx.fillRect(0, i + (time * 10) % 4, w, 1); }
+                
+                // Evento Tempestade
+                if (this.currentEvent === 'STORM') {
+                    ctx.fillStyle = `rgba(0, 0, 0, ${0.4 + Math.random()*0.2})`;
+                    ctx.fillRect(0, 0, w, h);
+                    if (Math.random() > 0.95) {
+                        ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.fillRect(0,0,w,h);
+                        if(window.Sfx) window.Sfx.error();
+                    }
+                } else {
+                    ctx.fillStyle = `rgba(0, 50, 60, ${0.1 + Math.sin(this.timeTotal*2)*0.05})`;
+                    ctx.fillRect(0, 0, w, h);
+                }
             }
 
-            if (this.state === 'BOOT') {
-                this.drawGiantOverlay(ctx, w, h, "SISTEMA USR", "CONECTANDO INTELIGÊNCIA ARTIFICIAL...");
-                return this.score;
+            switch (this.state) {
+                case 'BOOT':
+                    this.drawOverlay(ctx, w, h, "INICIALIZANDO SISTEMAS", "Carregando Módulos de Visão e Economia...");
+                    break;
+                case 'CALIBRATE':
+                    this.drawOverlay(ctx, w, h, "CALIBRAR PONTO ZERO", "Aponte o caminhão para frente e TOQUE NA TELA");
+                    break;
+                case 'PLAY':
+                case 'EXTRACTING':
+                    this.updatePhysics(dt);
+                    this.updateEvents(dt);
+                    this.spawnAnomalies(dt);
+                    this.processAR(ctx, w, h, dt);
+                    this.drawHUD(ctx, w, h);
+                    break;
+                case 'BASE':
+                    this.drawBaseMenu(ctx, w, h);
+                    break;
+                case 'TOWING':
+                    this.drawOverlay(ctx, w, h, "PANE SECA!", "Combustível esgotado. Resgate acionado (-R$500). Toque para confirmar.");
+                    break;
             }
 
-            if (this.state === 'SETUP_TRUCK') {
-                this.drawGiantOverlay(ctx, w, h, "REGISTRO DE FROTA", "ENQUADRE SEU CAMINHÃO AQUI E TOQUE NA TELA");
-                // Mira de foto
-                ctx.strokeStyle = "#0ff"; ctx.lineWidth = 4;
-                ctx.strokeRect(w/2 - 150, h/2 - 100, 300, 200);
-                ctx.beginPath(); ctx.moveTo(w/2, h/2 - 120); ctx.lineTo(w/2, h/2 - 80); ctx.stroke();
-                ctx.beginPath(); ctx.moveTo(w/2, h/2 + 80); ctx.lineTo(w/2, h/2 + 120); ctx.stroke();
-                return this.score;
-            }
-
-            if (this.state === 'SHOP' || this.state === 'UNLOADING') {
-                this.drawGarageScene(ctx, w, h);
-                return this.score;
-            }
-
-            this.playMode(ctx, w, h);
-            return this.score;
+            this.updateParticles(ctx, dt, w, h);
+            return this.score || 0; // Garantir retorno numérico válido
         },
 
-        drawGiantOverlay: function(ctx, w, h, title, sub) {
-            ctx.fillStyle = "rgba(0, 10, 20, 0.85)"; ctx.fillRect(0, 0, w, h);
-            ctx.fillStyle = this.colorMain; ctx.textAlign = "center";
-            ctx.font = "bold clamp(30px, 6vw, 60px) 'Russo One'";
-            ctx.fillText(title, w/2, h/2 - 180);
-            ctx.fillStyle = "#fff"; ctx.font = "bold clamp(14px, 4vw, 24px) 'Chakra Petch'";
-            ctx.fillText(sub, w/2, h/2 - 140);
+        updatePhysics: function(dt) {
+            if (this.cooldown > 0) this.cooldown -= dt;
+
+            if (this.virtualSpeed > 0.1 && this.state === 'PLAY') {
+                let speedMod = 1.0 - (this.wear.motor / 200); 
+                if (this.currentEvent === 'STORM') speedMod *= 0.5; // Tempestade deixa lento
+                
+                let currentSpeed = this.virtualSpeed * speedMod;
+                let rad = (this.currentHeading - this.baseHeading) * (Math.PI / 180);
+                
+                let jitter = (Math.random() - 0.5) * (this.wear.wheels / 100) * 0.5;
+                rad += jitter;
+
+                this.vPos.x += Math.sin(rad) * currentSpeed * dt;
+                this.vPos.y -= Math.cos(rad) * currentSpeed * dt; 
+
+                // Consumo (Eventos podem aumentar o consumo)
+                let fuelMult = this.currentEvent === 'GLITCH' ? 3.0 : 1.0;
+                let fuelCost = this.stats.fuelRate * (1 + (this.wear.motor / 100)) * fuelMult * dt;
+                this.fuel = Math.max(0, this.fuel - fuelCost);
+
+                let wearMod = 1.0 - (this.upgrades.chassis.lvl * 0.15); 
+                this.wear.motor = Math.min(100, this.wear.motor + (this.stats.wearRate * wearMod * dt));
+                this.wear.wheels = Math.min(100, this.wear.wheels + (this.stats.wearRate * wearMod * 1.5 * dt));
+
+                if (this.fuel <= 0) {
+                    this.state = 'TOWING';
+                    this.money = Math.max(0, this.money - 500);
+                    this.vPos = { x: 0, y: 0 }; 
+                    if(window.Sfx) window.Sfx.error();
+                }
+            }
+        },
+
+        updateEvents: function(dt) {
+            if (this.currentEvent) {
+                this.eventTimer -= dt;
+                if (this.eventTimer <= 0) this.currentEvent = null;
+            } else if (Math.random() < (0.05 * dt)) { // Probabilidade dinâmica baseada no tempo
+                this.currentEvent = Math.random() > 0.5 ? 'STORM' : 'GLITCH';
+                this.eventTimer = 10 + Math.random() * 10;
+                window.System.msg("ALERTA AMBIENTAL: " + this.currentEvent);
+                if(window.Sfx) window.Sfx.error();
+            }
+        },
+
+        spawnAnomalies: function(dt) {
+            this.spawnTimer += dt;
+            if (this.anomalies.length < 5 && this.spawnTimer > 2.0) {
+                this.spawnTimer = 0;
+                let isRare = Math.random() < 0.15;
+                let isTrap = Math.random() < 0.10;
+                let dist = 30 + Math.random() * 120;
+                let ang = Math.random() * Math.PI * 2;
+                
+                this.anomalies.push({
+                    id: Math.random().toString(36),
+                    x: this.vPos.x + Math.cos(ang) * dist,
+                    y: this.vPos.y + Math.sin(ang) * dist,
+                    type: isRare ? 'RARE' : (isTrap ? 'TRAP' : 'NORMAL'),
+                    val: isRare ? 5000 : (isTrap ? -500 : 1000 + Math.floor(Math.random()*1000)),
+                    life: isRare ? 45 : 999 // Missão Dinâmica: Raros somem rápido
+                });
+            }
+            
+            // Decaimento de tempo limite das missões dinâmicas
+            this.anomalies.forEach(a => { if (a.life < 999) a.life -= dt; });
+            this.anomalies = this.anomalies.filter(a => a.life > 0);
         },
 
         getAverageColor: function(ctx, x, y, width, height) {
             try {
                 const data = ctx.getImageData(x, y, width, height).data;
                 let r = 0, g = 0, b = 0;
-                for (let i = 0; i < data.length; i += 4) { r += data[i]; g += data[i+1]; b += data[i+2]; }
+                for (let i = 0; i < data.length; i += 4) { r+=data[i]; g+=data[i+1]; b+=data[i+2]; }
                 const count = data.length / 4;
                 return { r: r/count, g: g/count, b: b/count };
             } catch (e) { return { r: 0, g: 0, b: 0 }; }
         },
 
-        playMode: function(ctx, w, h) {
-            const cx = w / 2;
-            const cy = h / 2;
-            let activeTarget = null;
+        processAR: function(ctx, w, h, dt) {
+            const cx = w / 2; const cy = h / 2;
+            let nearestDist = 9999;
+            this.activeAnomaly = null;
+            
+            this.anomalies.forEach(ano => {
+                let d = Math.hypot(ano.x - this.vPos.x, ano.y - this.vPos.y);
+                if (d < nearestDist) { nearestDist = d; this.activeAnomaly = ano; }
+            });
 
-            if (this.cooldown > 0) this.cooldown--;
-
-            // ==========================================
-            // DETECÇÃO (SÓ RODA NO MODO SCANNING)
-            // ==========================================
-            if (this.state === 'SCANNING') {
-                const floorY = h * 0.82;
-                this.floorColor = this.getAverageColor(ctx, cx - 50, floorY, 100, 40);
+            if (nearestDist < 15 && this.state === 'PLAY' && this.cargo.length < this.stats.maxCargo && this.cooldown <= 0) {
+                
+                this.floorColor = this.getAverageColor(ctx, cx - 50, h * 0.85, 100, 40);
                 this.targetColor = this.getAverageColor(ctx, cx - 40, cy - 40, 80, 80);
                 
-                ctx.strokeStyle = "rgba(0, 255, 100, 0.6)"; ctx.lineWidth = 2; ctx.strokeRect(cx - 50, floorY, 100, 40);
-                ctx.fillStyle = "#fff"; ctx.font = "bold 12px monospace"; ctx.textAlign = "center"; ctx.fillText("REF: CHÃO", cx, floorY - 5);
-                
-                ctx.strokeStyle = "rgba(0, 255, 255, 0.6)"; ctx.lineWidth = 2; ctx.strokeRect(cx - 40, cy - 40, 80, 80);
-                ctx.fillText("ALVO", cx, cy - 45);
-                
-                this.currentDiff = Math.abs(this.floorColor.r - this.targetColor.r) + Math.abs(this.floorColor.g - this.targetColor.g) + Math.abs(this.floorColor.b - this.targetColor.b);
+                let colorDiff = Math.abs(this.floorColor.r - this.targetColor.r) + 
+                                Math.abs(this.floorColor.g - this.targetColor.g) + 
+                                Math.abs(this.floorColor.b - this.targetColor.b);
 
-                if (this.currentDiff > 55) { 
-                    activeTarget = { cx: cx, cy: cy, w: 180, h: 180, label: "ANOMALIA DETECTADA", color: this.colorDanger };
+                let visualFound = (colorDiff > 60);
+
+                // IA Seguro contra gargalos
+                if (this.objectModel && window.System.video && (this.timeTotal - this.lastDetectTime > 0.3)) {
+                    this.objectModel.detect(window.System.video)
+                        .then(preds => { this.detectedItems = preds || []; })
+                        .catch(() => { this.detectedItems = []; });
+                    this.lastDetectTime = this.timeTotal;
                 }
 
-                if (this.objectModel && window.System.video && window.System.video.readyState === 4) {
-                    if (Date.now() - this.lastDetectTime > 200) {
-                        this.objectModel.detect(window.System.video).then(predictions => { this.detectedItems = predictions; });
-                        this.lastDetectTime = Date.now();
-                    }
-                    const scaleX = w / window.System.video.videoWidth; const scaleY = h / window.System.video.videoHeight;
+                const scaleX = w / (window.System.video.videoWidth || w);
+                const scaleY = h / (window.System.video.videoHeight || h);
+                
+                this.detectedItems.forEach(item => {
+                    if (['person', 'bed', 'sofa', 'tv', 'door'].includes(item.class) || item.score < 0.15) return;
+                    const boxW = item.bbox[2] * scaleX; const boxH = item.bbox[3] * scaleY;
+                    if (boxW > w * 0.8) return;
+                    
+                    const itemCx = (item.bbox[0] * scaleX) + boxW/2;
+                    const itemCy = (item.bbox[1] * scaleY) + boxH/2;
+                    
+                    if (Math.hypot(itemCx - cx, itemCy - cy) < 200) visualFound = true;
+                });
 
-                    this.detectedItems.forEach(item => {
-                        const ignoredClasses = ['person', 'bed', 'sofa', 'tv', 'refrigerator', 'door', 'dining table'];
-                        if (ignoredClasses.includes(item.class) || item.score < 0.15) return;
-                        const boxW = item.bbox[2] * scaleX; const boxH = item.bbox[3] * scaleY;
-                        if (boxW > w * 0.8 || boxH > h * 0.8) return;
+                // UI de Busca Ativa
+                let isRare = this.activeAnomaly.type === 'RARE';
+                ctx.strokeStyle = isRare ? this.colors.rare : this.colors.main; 
+                ctx.lineWidth = 4 + Math.sin(this.timeTotal*10)*2;
+                ctx.strokeRect(cx - 150, cy - 150, 300, 300);
+                
+                ctx.fillStyle = isRare ? this.colors.rare : this.colors.main; 
+                ctx.font = "bold 20px 'Chakra Petch'"; ctx.textAlign = "center";
+                ctx.fillText(`ANOMALIA A ${Math.floor(nearestDist)}m. CONFIRME COM A CÂMERA...`, cx, cy - 160);
 
-                        const boxX = item.bbox[0] * scaleX; const boxY = item.bbox[1] * scaleY;
-                        const itemCx = boxX + (boxW/2); const itemCy = boxY + (boxH/2);
-
-                        this.drawHologramBox(ctx, boxX, boxY, boxW, boxH, "VEÍCULO IDENTIFICADO", "rgba(0,255,255,0.4)");
-                        if (Math.hypot(itemCx - cx, itemCy - cy) < 250) {
-                            activeTarget = { cx: itemCx, cy: cy, w: boxW, h: boxH, label: "ALVO DE SUCATA", color: this.colorMain };
-                        }
-                    });
-                }
-
-                if (activeTarget && this.cooldown <= 0) {
-                    this.targetItem = activeTarget;
-                    this.state = 'CONFIRMING';
-                    this.truckMoveEnergy = 0; 
-                    this.graceTimer = 60 + (this.upgrades.pneus.level * 10); 
-                    if(window.Sfx) window.Sfx.play(1000, 'sawtooth', 0.1, 0.1);
+                if (visualFound) {
+                    this.state = 'EXTRACTING';
+                    this.extractProgress = 0;
+                    if(window.Sfx) window.Sfx.play(1200, 'sawtooth', 0.1, 0.1);
                 }
             }
 
-            // ==========================================
-            // CONFIRMAÇÃO FÍSICA
-            // ==========================================
-            if (this.state === 'CONFIRMING') {
-                this.graceTimer--;
-                if (this.graceTimer <= 0) {
-                    this.state = 'SCANNING'; this.targetItem = null; if(window.Sfx) window.Sfx.error();
+            if (this.state === 'EXTRACTING') {
+                let extractSpeed = this.stats.scanPower * (1.0 + (this.upgrades.scanner.lvl * 0.2));
+                
+                // Progresso misto: tempo natural + força física
+                this.extractProgress += (15 * extractSpeed * dt);
+                if (this.virtualSpeed > 1.0) {
+                    this.extractProgress += (this.virtualSpeed * extractSpeed * dt * 5);
+                    if(window.Gfx) window.Gfx.addShake(1);
                 }
 
-                if (this.targetItem) {
-                    const tX = this.targetItem.cx; const tY = this.targetItem.cy;
-                    
-                    ctx.save(); ctx.translate(tX, tY);
-                    ctx.rotate(time); ctx.strokeStyle = "#f1c40f"; ctx.lineWidth = 6; ctx.setLineDash([15, 10]); 
-                    ctx.beginPath(); ctx.arc(0, 0, 150, 0, Math.PI*2); ctx.stroke(); ctx.restore();
+                ctx.fillStyle = `rgba(255, 0, 60, ${Math.abs(Math.sin(this.timeTotal*10))*0.3})`;
+                ctx.fillRect(0, 0, w, h);
+                ctx.fillStyle = this.colors.danger; ctx.textAlign = "center";
+                ctx.font = "bold clamp(30px, 6vw, 60px) 'Russo One'";
+                ctx.fillText("TRAVADO! ACELERE PARA EXTRAIR!", cx, cy - 100);
 
-                    ctx.fillStyle = "rgba(0,0,0,0.8)"; ctx.fillRect(0, cy - 80, w, 160);
-                    ctx.fillStyle = "#f1c40f"; ctx.font = "bold clamp(25px, 6vw, 45px) 'Russo One'"; ctx.textAlign = "center";
-                    ctx.fillText("AUTORIZAÇÃO DE EXTRAÇÃO", w/2, cy - 20);
-                    ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
-                    ctx.fillText("MOVA O CAMINHÃO PARA FRENTE E TRÁS", w/2, cy + 10);
+                ctx.strokeStyle = `rgba(0, 255, 255, ${0.5 + Math.sin(this.timeTotal*20)*0.5})`; ctx.lineWidth = 20;
+                ctx.beginPath(); ctx.moveTo(cx, h); ctx.lineTo(cx, cy); ctx.stroke();
 
-                    const energyPct = Math.min(100, this.truckMoveEnergy);
-                    ctx.fillStyle = "#333"; ctx.fillRect(w/2 - 150, cy + 30, 300, 20);
-                    ctx.fillStyle = "#2ecc71"; ctx.fillRect(w/2 - 150, cy + 30, energyPct * 3, 20);
-                    ctx.strokeStyle = "#fff"; ctx.strokeRect(w/2 - 150, cy + 30, 300, 20);
+                const ringSize = Math.max(50, 250 - this.extractProgress);
+                ctx.save(); ctx.translate(cx, cy); ctx.rotate(this.timeTotal * 5);
+                ctx.strokeStyle = this.colors.danger; ctx.lineWidth = 8; ctx.setLineDash([20, 15]);
+                ctx.beginPath(); ctx.arc(0, 0, ringSize, 0, Math.PI*2); ctx.stroke(); ctx.restore();
 
-                    if (this.truckMoveEnergy >= 100) {
-                        this.state = 'ANALYZING'; 
-                        this.scanProgress = 0;
-                        let baseVal = Math.floor(Math.random() * 800) + 400;
-                        let bonus = 1 + (this.upgrades.oleo.level * 0.10); 
-                        this.currentReward = Math.floor(baseVal * bonus);
-                        if(window.Sfx) window.Sfx.play(1200, 'square', 0.2, 0.2);
-                    }
-                }
-            }
-
-            // ==========================================
-            // EXTRAÇÃO E ADIANTAMENTO
-            // ==========================================
-            if (this.state === 'ANALYZING') {
-                if (this.targetItem) {
-                    let speedBoost = 1 + (this.upgrades.motor.level * 0.2);
-                    this.scanProgress += (2.5 * speedBoost);
-                    
-                    if (this.scanProgress % 8 === 0 && window.Sfx) window.Sfx.hover();
-                    if(window.Gfx) window.Gfx.addShake(2); 
-
-                    const tX = this.targetItem.cx; const tY = this.targetItem.cy;
-                    const ringSize = Math.max(80, 250 - (this.scanProgress * 1.7));
-                    
-                    ctx.save(); ctx.translate(tX, tY);
-                    ctx.rotate(time * 3); ctx.strokeStyle = this.colorDanger; ctx.lineWidth = 10; ctx.setLineDash([20, 15]); ctx.beginPath(); ctx.arc(0, 0, ringSize, 0, Math.PI*2); ctx.stroke();
-                    ctx.rotate(-time * 5); ctx.strokeStyle = this.colorMain; ctx.setLineDash([40, 10]); ctx.beginPath(); ctx.arc(0, 0, ringSize + 20, 0, Math.PI*2); ctx.stroke(); ctx.restore();
-
-                    ctx.fillStyle = this.colorDanger; ctx.font = "bold 16px monospace"; ctx.textAlign = "center";
-                    ctx.fillText(`CARREGANDO CAÇAMBA...`, tX, tY - ringSize - 20);
-                    
-                    ctx.strokeStyle = `rgba(0, 255, 255, ${0.5 + Math.sin(time*15)*0.5})`; ctx.lineWidth = 20; 
-                    ctx.beginPath(); ctx.moveTo(cx, h); ctx.lineTo(tX, tY); ctx.stroke();
-
-                    if (this.scanProgress >= 100) {
-                        this.cargo = "SUCATA PROCESSADA";
-                        this.state = 'RETURNING';
-                        this.scanProgress = 0;
-                        this.returnTimer = 600; // 30s timeout para GPS
-                        
-                        let advancePayment = Math.floor(this.currentReward * 0.3);
-                        this.moneyEarned += advancePayment;
-                        this.score += advancePayment / 10;
-                        
-                        if(window.Gfx) window.Gfx.shakeScreen(35);
+                if (this.extractProgress >= 100) {
+                    if (this.activeAnomaly.type === 'TRAP') {
+                        this.fuel = Math.max(0, this.fuel - 20);
+                        this.wear.motor = Math.min(100, this.wear.motor + 10);
+                        window.System.msg("ARMADILHA! DANOS CRÍTICOS!");
+                        if(window.Sfx) window.Sfx.error();
+                    } else {
+                        this.cargo.push(this.activeAnomaly.val);
+                        this.score += this.activeAnomaly.val / 10;
+                        window.System.msg(this.activeAnomaly.type === 'RARE' ? "CARGA RARA OBTIDA!" : "CARGA ADQUIRIDA!");
                         if(window.Sfx) window.Sfx.epic();
-                        this.spawnCaptureEffect(tX, tY, this.colorMain);
-                        this.targetItem = null;
-                        window.System.msg(`ADIANTAMENTO: R$ ${advancePayment}`);
                     }
+                    
+                    this.anomalies = this.anomalies.filter(a => a.id !== this.activeAnomaly.id);
+                    this.state = 'PLAY';
+                    this.cooldown = 2.0; 
+                    if(window.Gfx) window.Gfx.shakeScreen(30);
+                    this.spawnParticles(cx, cy, 50, this.colors.main);
+                }
+
+                if (nearestDist > 25) {
+                    this.state = 'PLAY';
+                    if(window.Sfx) window.Sfx.error();
+                    window.System.msg("ALVO ESCAPOU!");
                 }
             }
-
-            // ==========================================
-            // RETORNO À BASE (GPS FOCADO)
-            // ==========================================
-            if (this.state === 'RETURNING') {
-                this.returnTimer--;
-                
-                // Animações exclusivas do Radar
-                ctx.fillStyle = `rgba(0, 255, 100, ${Math.abs(Math.sin(time*5))*0.1})`; ctx.fillRect(0, 0, w, h); 
-                ctx.fillStyle = "rgba(0, 10, 20, 0.9)"; ctx.fillRect(0, 0, w, 150);
-                
-                ctx.fillStyle = this.colorSuccess; ctx.textAlign = "center"; ctx.font = "bold clamp(35px, 8vw, 70px) 'Russo One'"; 
-                ctx.fillText("SIGA O RADAR PARA A BASE", w/2, 80);
-                ctx.fillStyle = "#fff"; ctx.font = "16px Arial"; ctx.fillText("SUA CAÇAMBA ESTÁ CHEIA. VOLTE PARA DESCARREGAR!", w/2, 110);
-
-                // RADAR GIGANTE NO CENTRO
-                ctx.save(); ctx.translate(cx, cy);
-                
-                // Anéis do radar
-                ctx.fillStyle = "rgba(0,50,20,0.8)"; ctx.fill();
-                ctx.strokeStyle = this.colorSuccess; ctx.lineWidth = 4;
-                ctx.beginPath(); ctx.arc(0, 0, 150, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-                ctx.beginPath(); ctx.arc(0, 0, 100, 0, Math.PI*2); ctx.stroke();
-                ctx.beginPath(); ctx.arc(0, 0, 50, 0, Math.PI*2); ctx.stroke();
-                
-                // Linha de varredura
-                ctx.rotate(time * 2);
-                ctx.fillStyle = "rgba(0, 255, 100, 0.4)";
-                ctx.beginPath(); ctx.moveTo(0,0); ctx.arc(0,0,150,0,Math.PI/4); ctx.fill();
-                
-                // Seta de direção (Bússola Real)
-                ctx.rotate(-time * 2); // desfaz rotação da varredura
-                ctx.rotate(this.compassHeading * (Math.PI / 180));
-                ctx.fillStyle = "#fff";
-                ctx.beginPath(); ctx.moveTo(0, -120); ctx.lineTo(40, 40); ctx.lineTo(-40, 40); ctx.fill();
-                ctx.restore();
-
-                let distText = this.distanceToBase > 0 ? `${this.distanceToBase.toFixed(1)}m` : "CALCULANDO...";
-                ctx.fillStyle = this.colorSuccess; ctx.font = "bold 40px 'Chakra Petch'"; ctx.fillText(distText, w/2, cy + 200);
-
-                // Botão de Emergência
-                ctx.fillStyle = "rgba(46, 204, 113, 0.4)"; ctx.fillRect(w/2 - 150, h - 170, 300, 50);
-                ctx.strokeStyle = this.colorSuccess; ctx.strokeRect(w/2 - 150, h - 170, 300, 50);
-                ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial"; ctx.fillText("CLIQUE AQUI PARA FORÇAR ENTREGA", w/2, h - 140);
-
-                // Chegou?
-                if (this.distanceToBase > 0 && this.distanceToBase < 3.5) {
-                    this.startUnloading();
-                }
-            }
-
-            if(this.state !== 'CONFIRMING' && this.state !== 'RETURNING') {
-                this.drawMachineHUD(ctx, w, h, cx, cy);
-            }
-            this.updateParticles(ctx, w, h);
         },
 
-        // ==========================================
-        // CENA DA GARAGEM / UNLOADING / SHOP
-        // ==========================================
-        drawGarageScene: function(ctx, w, h) {
-            const cx = w / 2; const cy = h / 2;
+        drawHUD: function(ctx, w, h) {
+            ctx.fillStyle = this.colors.panel; ctx.fillRect(0, 0, w, 60);
+            ctx.strokeStyle = this.colors.main; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, 60); ctx.lineTo(w, 60); ctx.stroke();
+
+            ctx.fillStyle = "#fff"; ctx.font = "bold 14px 'Chakra Petch'"; ctx.textAlign = "left";
+            ctx.fillText(`NÍVEL: ${this.level} (XP: ${Math.floor(this.xp)})`, 20, 25);
+            ctx.fillStyle = "rgba(0,0,0,0.8)"; ctx.fillRect(20, 35, 200, 15);
+            let fuelPct = this.fuel / this.stats.maxFuel;
+            ctx.fillStyle = fuelPct > 0.3 ? this.colors.success : this.colors.danger;
+            ctx.fillRect(20, 35, fuelPct * 200, 15);
+            ctx.strokeStyle = "#fff"; ctx.strokeRect(20, 35, 200, 15);
+            ctx.fillStyle = "#fff"; ctx.fillText("COMBUSTÍVEL", 25, 47);
+
+            ctx.textAlign = "right";
+            ctx.fillStyle = this.wear.motor > 80 ? this.colors.danger : this.colors.main;
+            ctx.fillText(`MOTOR: ${Math.floor(this.wear.motor)}%`, w - 20, 25);
+            ctx.fillStyle = this.wear.wheels > 80 ? this.colors.danger : this.colors.main;
+            ctx.fillText(`PNEUS: ${Math.floor(this.wear.wheels)}%`, w - 20, 45);
+
+            // Radar Circular HUD
+            const rCx = w - 80; const rCy = 160; const rR = 60;
+            ctx.fillStyle = "rgba(0, 20, 40, 0.8)"; ctx.beginPath(); ctx.arc(rCx, rCy, rR, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = this.currentEvent ? this.colors.danger : this.colors.main; 
+            ctx.lineWidth = 2; ctx.stroke();
+
+            let radHead = (this.currentHeading - this.baseHeading) * (Math.PI / 180);
             
-            // Fundo Blueprint
+            const drawBlip = (worldX, worldY, color, size, isBlinking) => {
+                let dx = worldX - this.vPos.x;
+                let dy = worldY - this.vPos.y;
+                let dist = Math.hypot(dx, dy);
+                if (dist < this.stats.radarRange) {
+                    if (isBlinking && Math.sin(this.timeTotal * 15) > 0) return;
+                    let angle = Math.atan2(dy, dx) + radHead + (Math.PI/2); 
+                    let screenDist = (dist / this.stats.radarRange) * rR;
+                    let mapX = rCx + Math.cos(angle) * screenDist;
+                    let mapY = rCy + Math.sin(angle) * screenDist;
+                    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(mapX, mapY, size, 0, Math.PI*2); ctx.fill();
+                }
+            };
+
+            drawBlip(0, 0, this.colors.success, 6, false);
+            
+            this.anomalies.forEach(ano => {
+                let color = ano.type === 'RARE' ? this.colors.rare : (ano.type === 'TRAP' ? this.colors.danger : this.colors.warn);
+                let blink = ano.type === 'RARE';
+                drawBlip(ano.x, ano.y, color, 4, blink);
+            });
+
+            ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.moveTo(rCx, rCy - 8); ctx.lineTo(rCx + 5, rCy + 5); ctx.lineTo(rCx - 5, rCy + 5); ctx.fill();
+
+            // Painel Inferior
+            ctx.fillStyle = this.colors.panel; ctx.fillRect(0, h - 80, w, 80);
+            ctx.strokeStyle = this.colors.main; ctx.beginPath(); ctx.moveTo(0, h - 80); ctx.lineTo(w, h - 80); ctx.stroke();
+
+            ctx.textAlign = "left"; ctx.fillStyle = "#fff"; ctx.font = "bold 20px 'Chakra Petch'";
+            ctx.fillText(`CAÇAMBA: ${this.cargo.length} / ${this.stats.maxCargo}`, 20, h - 45);
+            ctx.fillStyle = this.colors.success; ctx.font = "bold 24px 'Russo One'";
+            ctx.fillText(`SALDO: R$ ${this.money.toLocaleString()}`, 20, h - 15);
+
+            let distToBase = Math.hypot(this.vPos.x, this.vPos.y);
+            ctx.textAlign = "right"; ctx.fillStyle = this.colors.main; ctx.font = "16px Arial";
+            ctx.fillText(`DIST. DA BASE: ${Math.floor(distToBase)}m`, w - 20, h - 45);
+
+            if (distToBase < 25) {
+                ctx.fillStyle = this.colors.success; ctx.fillRect(w/2 - 120, h - 70, 240, 50);
+                ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.font = "bold 16px 'Russo One'";
+                ctx.fillText("CLIQUE PARA MANUTENÇÃO", w/2, h - 40);
+            }
+        },
+
+        deliverCargo: function() {
+            if (this.cargo.length > 0) {
+                let total = this.cargo.reduce((a, b) => a + b, 0);
+                // Bônus de eficiência de combustível
+                let effBonus = Math.floor(total * (this.fuel / this.stats.maxFuel) * 0.2); 
+                total += effBonus;
+                
+                this.money += total;
+                this.xp += this.cargo.length * 100;
+                this.cargo = [];
+                
+                if (this.xp >= this.level * 500) {
+                    this.xp = 0; this.level++;
+                    window.System.msg("NÍVEL " + this.level + " ALCANÇADO!");
+                    if(window.Sfx) window.Sfx.epic();
+                } else {
+                    window.System.msg(`ENTREGA: R$${total} (Bônus: R$${effBonus})`);
+                    if(window.Sfx) window.Sfx.coin();
+                }
+                this.spawnParticles(window.innerWidth/2, window.innerHeight/2, 100, this.colors.success);
+            }
+        },
+
+        drawBaseMenu: function(ctx, w, h) {
             ctx.fillStyle = "#0a192f"; ctx.fillRect(0, 0, w, h);
             ctx.strokeStyle = "rgba(0, 255, 255, 0.1)"; ctx.lineWidth = 1;
             for(let i=0; i<w; i+=40) { ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,h); ctx.stroke(); }
             for(let i=0; i<h; i+=40) { ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(w,i); ctx.stroke(); }
 
-            // DESENHA A FOTO DO CAMINHÃO NO CENTRO
-            if (this.truckSnapshot) {
-                const imgW = w * 0.8; const imgH = (this.truckSnapshot.height / this.truckSnapshot.width) * imgW;
-                const imgX = cx - imgW/2; const imgY = cy - imgH/2 - 50;
-                
-                ctx.save();
-                // Moldura High-Tech
-                ctx.shadowColor = this.colorMain; ctx.shadowBlur = 20;
-                ctx.strokeStyle = this.colorMain; ctx.lineWidth = 4;
-                ctx.strokeRect(imgX, imgY, imgW, imgH);
-                ctx.shadowBlur = 0;
-                
-                ctx.globalAlpha = 0.8; // Fica meio transparente
-                ctx.drawImage(this.truckSnapshot, imgX, imgY, imgW, imgH);
-                
-                // Scanline passando na foto
-                ctx.fillStyle = "rgba(0, 255, 255, 0.4)";
-                ctx.fillRect(imgX, imgY + ((time * 50) % imgH), imgW, 5);
-                ctx.restore();
+            const cx = w/2;
+            
+            ctx.fillStyle = this.colors.main; ctx.textAlign = "center";
+            ctx.font = "bold clamp(30px, 6vw, 50px) 'Russo One'"; ctx.fillText("QUARTEL GENERAL", cx, 50);
+            
+            ctx.fillStyle = this.colors.success; ctx.font = "bold 24px Arial";
+            ctx.fillText(`SALDO GLOBAL: R$ ${this.money.toLocaleString()}`, cx, 90);
+            
+            ctx.fillStyle = "#fff"; ctx.font = "18px 'Chakra Petch'";
+            ctx.fillText(`NÍVEL DA FROTA: ${this.level}`, cx, 115);
 
-                // LÓGICA DE UNLOADING (ANIMAÇÃO DOS BRAÇOS)
-                if (this.state === 'UNLOADING') {
-                    this.returnTimer++;
-                    
-                    // Braço robótico esquerdo trabalhando
-                    ctx.strokeStyle = "#f1c40f"; ctx.lineWidth = 15; ctx.lineCap = "round";
-                    ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(imgX + 50 + Math.sin(time*10)*30, imgY + imgH/2 + Math.cos(time*8)*20); ctx.stroke();
-                    
-                    // Braço direito com laser de solda
-                    const laserX = imgX + imgW - 40 + Math.cos(time*12)*30;
-                    const laserY = imgY + imgH/2 + Math.sin(time*7)*30;
-                    ctx.beginPath(); ctx.moveTo(w, cy+50); ctx.lineTo(laserX, laserY); ctx.stroke();
-                    
-                    // Faíscas da solda
-                    if (Math.random() > 0.5) this.spawnCaptureEffect(laserX, laserY, "#f1c40f");
+            // Botões de Manutenção
+            const drawRepBtn = (x, y, label, cost, condition) => {
+                let canBuy = this.money >= cost && condition;
+                ctx.fillStyle = "rgba(0,0,0,0.8)"; ctx.fillRect(x, y, 200, 60);
+                ctx.strokeStyle = canBuy ? this.colors.warn : "#555"; ctx.lineWidth=2; ctx.strokeRect(x,y,200,60);
+                ctx.textAlign="center"; ctx.fillStyle = "#fff"; ctx.font="bold 14px Arial"; ctx.fillText(label, x+100, y+25);
+                ctx.fillStyle = canBuy ? this.colors.warn : "#555"; ctx.fillText(`R$ ${cost}`, x+100, y+45);
+            };
 
-                    ctx.fillStyle = "rgba(0,0,0,0.8)"; ctx.fillRect(0, 0, w, 100);
-                    ctx.fillStyle = this.colorSuccess; ctx.textAlign = "center"; ctx.font = "bold 40px 'Russo One'";
-                    ctx.fillText("DESCARREGANDO...", cx, 60);
+            let repMotorCost = Math.floor(this.wear.motor * 5);
+            let repWheelsCost = Math.floor(this.wear.wheels * 3);
+            let fuelCost = Math.floor((this.stats.maxFuel - this.fuel) * 2);
 
-                    ctx.fillStyle = "#fff"; ctx.font = "20px Arial";
-                    ctx.fillText("Limpando Caçamba. Manutenção da Frota em andamento.", cx, h - 100);
+            drawRepBtn(cx - 310, 140, "REPARAR MOTOR", repMotorCost, this.wear.motor > 5);
+            drawRepBtn(cx - 100, 140, "TROCAR PNEUS", repWheelsCost, this.wear.wheels > 5);
+            drawRepBtn(cx + 110, 140, "ABASTECER BATERIA", fuelCost, this.stats.maxFuel - this.fuel > 5);
 
-                    if (this.returnTimer > 120) { // Fica 6 segundos na tela de descarga
-                        this.finishDelivery();
+            // Loja de Upgrades
+            ctx.fillStyle = "#fff"; ctx.fillText("SISTEMAS DE APRIMORAMENTO", cx, 240);
+            
+            const drawUpgBtn = (y, key) => {
+                let upg = this.upgrades[key];
+                let isMax = upg.lvl >= upg.max;
+                let cost = Math.floor(upg.baseCost * Math.pow(1.5, upg.lvl - 1));
+                let canBuy = this.money >= cost && !isMax;
+
+                ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(cx - 200, y, 400, 50);
+                ctx.strokeStyle = isMax ? "#555" : (canBuy ? this.colors.success : this.colors.danger);
+                ctx.strokeRect(cx - 200, y, 400, 50);
+
+                ctx.textAlign="left"; ctx.fillStyle="#fff"; ctx.font="bold 16px 'Chakra Petch'";
+                ctx.fillText(`LVL ${upg.lvl}: ${upg.name}`, cx - 180, y + 30);
+                ctx.textAlign="right"; ctx.font="bold 18px 'Russo One'";
+                ctx.fillStyle = isMax ? "#555" : (canBuy ? this.colors.success : this.colors.danger);
+                ctx.fillText(isMax ? "MÁX" : `R$ ${cost}`, cx + 180, y + 30);
+            };
+
+            drawUpgBtn(260, 'tank'); drawUpgBtn(320, 'motor'); 
+            drawUpgBtn(380, 'chassis'); drawUpgBtn(440, 'scanner'); drawUpgBtn(500, 'cargo');
+
+            ctx.fillStyle = this.colors.main; ctx.fillRect(cx - 150, h - 80, 300, 60);
+            ctx.fillStyle = "#000"; ctx.textAlign="center"; ctx.font="bold 20px 'Russo One'";
+            ctx.fillText("INICIAR PATRULHA", cx, h - 45);
+        },
+
+        handleBaseClicks: function(x, y, w, h) {
+            const cx = w/2;
+
+            const buyObj = (cost, callback) => {
+                if (this.money >= cost && cost > 0) { this.money -= cost; callback(); if(window.Sfx) window.Sfx.coin(); return true; }
+                if(window.Sfx) window.Sfx.error(); return false;
+            };
+
+            if(y > 140 && y < 200) {
+                if (x > cx - 310 && x < cx - 110) buyObj(Math.floor(this.wear.motor * 5), () => this.wear.motor = 0);
+                if (x > cx - 100 && x < cx + 100) buyObj(Math.floor(this.wear.wheels * 3), () => this.wear.wheels = 0);
+                if (x > cx + 110 && x < cx + 310) buyObj(Math.floor((this.stats.maxFuel - this.fuel) * 2), () => this.fuel = this.stats.maxFuel);
+                return;
+            }
+
+            const tryUpgrade = (upgKey, btnY) => {
+                if (y > btnY && y < btnY + 50 && x > cx - 200 && x < cx + 200) {
+                    let upg = this.upgrades[upgKey];
+                    let cost = Math.floor(upg.baseCost * Math.pow(1.5, upg.lvl - 1));
+                    if (upg.lvl < upg.max && buyObj(cost, () => upg.lvl++)) {
+                        this.applyStats();
+                        window.System.msg("UPGRADE INSTALADO!");
+                        this.spawnParticles(cx, btnY+25, 20, this.colors.warn);
                     }
                 }
+            };
+
+            tryUpgrade('tank', 260); tryUpgrade('motor', 320); 
+            tryUpgrade('chassis', 380); tryUpgrade('scanner', 440); tryUpgrade('cargo', 500);
+
+            if (y > h - 80 && x > cx - 150 && x < cx + 150) {
+                this.state = 'PLAY';
+                // Garante que sai da base recarregado caso o usuário tenha esquecido
+                if(this.fuel <= 0) this.fuel = this.stats.maxFuel;
+                if(window.Sfx) window.Sfx.click();
             }
-
-            // LÓGICA DA LOJA (SHOP)
-            if (this.state === 'SHOP') {
-                ctx.fillStyle = "rgba(0,0,0,0.8)"; ctx.fillRect(0, 0, w, 140);
-                ctx.fillStyle = this.colorShop; ctx.textAlign = "center";
-                ctx.font = "bold clamp(35px, 8vw, 60px) 'Russo One'";
-                ctx.fillText("OFICINA USR", cx, 60);
-                ctx.fillStyle = this.colorSuccess; ctx.font = "bold 26px Arial";
-                ctx.fillText(`SALDO: R$ ${this.moneyEarned.toLocaleString('pt-BR')}`, cx, 100);
-
-                const drawUpgradeBtn = (y, key) => {
-                    let upg = this.upgrades[key];
-                    let isMax = upg.level >= upg.max;
-                    let canAfford = this.moneyEarned >= upg.cost;
-                    
-                    ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
-                    ctx.fillRect(cx - 160, y, 320, 70);
-                    
-                    ctx.strokeStyle = isMax ? "#555" : (canAfford ? this.colorSuccess : this.colorDanger);
-                    ctx.lineWidth = 3; ctx.strokeRect(cx - 160, y, 320, 70);
-
-                    ctx.textAlign = "left"; ctx.fillStyle = "#fff"; ctx.font = "bold 18px 'Chakra Petch'";
-                    ctx.fillText(`LVL ${upg.level}: ${upg.name}`, cx - 140, y + 25);
-                    ctx.fillStyle = "#aaa"; ctx.font = "12px Arial";
-                    ctx.fillText(upg.desc, cx - 140, y + 45);
-
-                    ctx.textAlign = "right"; ctx.font = "bold 20px 'Russo One'";
-                    ctx.fillStyle = isMax ? "#aaa" : (canAfford ? this.colorSuccess : this.colorDanger);
-                    ctx.fillText(isMax ? "MÁXIMO" : `R$ ${upg.cost}`, cx + 140, y + 35);
-                };
-
-                drawUpgradeBtn(h * 0.40, 'motor');
-                drawUpgradeBtn(h * 0.55, 'pneus');
-                drawUpgradeBtn(h * 0.70, 'oleo');
-
-                // Botão Sair
-                ctx.fillStyle = this.colorMain; ctx.fillRect(cx - 150, h * 0.88, 300, 60);
-                ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.font = "bold 22px 'Russo One'";
-                ctx.fillText("VOLTAR À PATRULHA", cx, h * 0.88 + 38);
-            }
-
-            this.updateParticles(ctx, w, h);
         },
 
-        startUnloading: function() {
-            this.state = 'UNLOADING';
-            this.returnTimer = 0; // Vai ser usado para contar o tempo na oficina
-            if(window.Sfx) window.Sfx.play(400, 'square', 1.0, 0.2); // Som de máquinas pesadas
-        },
-
-        finishDelivery: function() {
-            this.itemsRecovered++;
-            let finalPayment = Math.floor(this.currentReward * 0.7);
-            this.moneyEarned += finalPayment;
-            this.score += finalPayment / 10;
+        applyStats: function() {
+            this.stats.maxFuel = 100 + (this.upgrades.tank.lvl * 50);
+            this.stats.baseSpeed = 20 + (this.upgrades.motor.lvl * 5);
+            this.stats.fuelRate = Math.max(0.5, 1.5 - (this.upgrades.motor.lvl * 0.15));
+            this.stats.scanPower = 1.0 + (this.upgrades.scanner.lvl * 0.5);
+            this.stats.radarRange = 150 + (this.upgrades.scanner.lvl * 50);
+            this.stats.maxCargo = 2 + this.upgrades.cargo.lvl;
             
-            this.cargo = null;
-            this.state = 'SCANNING';
-            this.cooldown = 100;
-            
-            if(window.Gfx) window.Gfx.shakeScreen(30);
-            if(window.Sfx) window.Sfx.epic();
-            this.spawnCaptureEffect(window.innerWidth/2, window.innerHeight, this.colorSuccess);
-            window.System.msg(`PAGAMENTO FINAL: R$ ${finalPayment}`);
+            if (this.fuel > this.stats.maxFuel) this.fuel = this.stats.maxFuel;
         },
 
-        spawnUpgradeAnimation: function(x, y, type) {
-            let col = type === 'motor' ? '#f39c12' : (type === 'oleo' ? '#34495e' : '#bdc3c7');
-            for(let i=0; i<40; i++) {
+        drawOverlay: function(ctx, w, h, title, sub) {
+            ctx.fillStyle = "rgba(0, 10, 20, 0.9)"; ctx.fillRect(0, 0, w, h);
+            ctx.fillStyle = this.colors.main; ctx.textAlign = "center";
+            ctx.font = "bold clamp(30px, 6vw, 60px) 'Russo One'"; ctx.fillText(title, w/2, h/2 - 20);
+            ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial"; ctx.fillText(sub, w/2, h/2 + 30);
+        },
+
+        spawnParticles: function(x, y, count, color) {
+            for(let i=0; i<count; i++) {
                 particles.push({
-                    type: 'upgrade', x: x + (Math.random()-0.5)*300, y: y + 30,
-                    vx: (Math.random()-0.5)*15, vy: -10 - Math.random()*15, life: 1.0, color: col
+                    x: x, y: y,
+                    vx: (Math.random()-0.5)*20, vy: (Math.random()-0.5)*20,
+                    life: 1.0, color: color, size: Math.random()*8+4
                 });
             }
         },
 
-        drawHologramBox: function(ctx, x, y, bw, bh, label, color) {
-            ctx.strokeStyle = color; ctx.lineWidth = 4; const l = 20; 
-            ctx.beginPath(); ctx.moveTo(x, y+l); ctx.lineTo(x, y); ctx.lineTo(x+l, y); ctx.moveTo(x+bw-l, y); ctx.lineTo(x+bw, y); ctx.lineTo(x+bw, y+l); ctx.moveTo(x+bw, y+bh-l); ctx.lineTo(x+bw, y+bh); ctx.lineTo(x+bw-l, y+bh); ctx.moveTo(x+l, y+bh); ctx.lineTo(x, y+bh); ctx.lineTo(x, y+bh-l); ctx.stroke();
-            ctx.fillStyle = color; ctx.font = "bold clamp(10px, 2vw, 16px) 'Chakra Petch'"; ctx.fillRect(x, y - 25, ctx.measureText(label).width + 10, 25); ctx.fillStyle = "#000"; ctx.textAlign = "left"; ctx.fillText(label, x + 5, y - 7);
-        },
-
-        drawMachineHUD: function(ctx, w, h, cx, cy) {
-            const grad = ctx.createRadialGradient(cx, cy, h*0.35, cx, cy, h);
-            grad.addColorStop(0, "rgba(0,0,0,0)"); grad.addColorStop(1, "rgba(0,10,20,0.85)");
-            ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
-
-            if (this.state === 'SCANNING') {
-                ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(w - 120, 20, 100, 50);
-                ctx.strokeStyle = this.colorShop; ctx.lineWidth = 2; ctx.strokeRect(w - 120, 20, 100, 50);
-                ctx.fillStyle = this.colorShop; ctx.textAlign = "center"; ctx.font = "bold 16px 'Russo One'";
-                ctx.fillText("OFICINA 🔧", w - 70, 50);
-
-                ctx.strokeStyle = "rgba(0, 255, 255, 0.3)"; ctx.lineWidth = 4;
-                ctx.beginPath(); ctx.arc(cx, cy, 180, 0, Math.PI*2); ctx.stroke();
-                
-                ctx.fillStyle = this.colorMain; ctx.textAlign = "center"; ctx.font = "bold clamp(30px, 6vw, 60px) 'Russo One'"; ctx.fillText("PROCURANDO SUCATA", w/2, 60);
-            }
-            else if (this.state === 'ANALYZING') {
-                ctx.fillStyle = `rgba(0, 255, 255, ${Math.abs(Math.sin(time*10))*0.2})`; ctx.fillRect(0, 0, w, h); 
-                ctx.fillStyle = this.colorMain; ctx.textAlign = "center"; ctx.font = "bold clamp(35px, 8vw, 70px) 'Russo One'"; ctx.fillText("CARREGANDO...", w/2, 80);
-                
-                ctx.fillStyle = "rgba(0, 0, 0, 0.8)"; ctx.fillRect(w*0.1, h*0.75, w*0.8, 40);
-                ctx.fillStyle = this.colorMain; ctx.fillRect(w*0.1, h*0.75, (this.scanProgress/100) * (w*0.8), 40);
-                ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.strokeRect(w*0.1, h*0.75, w*0.8, 40);
-            } 
-
-            // RODAPÉ
-            ctx.fillStyle = "rgba(0, 15, 20, 0.95)"; ctx.fillRect(0, h - 110, w, 110);
-            ctx.strokeStyle = this.colorMain; ctx.lineWidth = 5; 
-            ctx.beginPath(); ctx.moveTo(0, h - 110); ctx.lineTo(w, h - 110); ctx.stroke();
-
-            ctx.textAlign = "left";
-            ctx.fillStyle = "#fff"; ctx.font = "bold clamp(18px, 4vw, 24px) 'Chakra Petch'";
-            ctx.fillText(`CAÇAMBA: ${this.cargo ? 'CHEIA' : 'VAZIA'}`, 20, h - 65);
-            
-            ctx.fillStyle = this.colorSuccess; ctx.font = "bold clamp(30px, 6vw, 50px) 'Russo One'";
-            ctx.fillText(`R$ ${this.moneyEarned.toLocaleString('pt-BR')}`, 20, h - 20);
-        },
-
-        spawnCaptureEffect: function(x, y, color) {
-            for(let i=0; i<50; i++) {
-                const angle = Math.random() * Math.PI * 2; const speed = Math.random() * 30 + 10;
-                particles.push({ type: 'binary', x: x, y: y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 1.0, val: Math.random() > 0.5 ? '1' : '0', color: color });
-            }
-            particles.push({ type: 'flash', life: 1.0, color: color });
-        },
-
-        updateParticles: function(ctx, w, h) {
+        updateParticles: function(ctx, dt, w, h) {
             ctx.globalCompositeOperation = 'screen';
-            particles.forEach(p => {
-                if (p.type === 'binary') {
-                    p.x += p.vx; p.y += p.vy; p.life -= 0.04; 
-                    ctx.fillStyle = p.color; ctx.globalAlpha = Math.max(0, p.life); ctx.font = "bold 20px monospace"; ctx.fillText(p.val, p.x, p.y);
-                } 
-                else if (p.type === 'flash') {
-                    ctx.globalAlpha = Math.max(0, p.life * 0.7); ctx.fillStyle = p.color; ctx.fillRect(0, 0, w, h); p.life -= 0.1; 
-                }
-                else if (p.type === 'upgrade') {
-                    p.x += p.vx; p.y += p.vy; p.vy += 0.8; // Gravidade
-                    p.life -= 0.02;
-                    ctx.fillStyle = p.color; ctx.globalAlpha = Math.max(0, p.life);
-                    ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, Math.PI*2); ctx.fill();
-                }
-            });
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx * dt * 60; p.y += p.vy * dt * 60;
+                p.life -= dt * 2;
+                if (p.life <= 0) { particles.splice(i, 1); continue; }
+                ctx.fillStyle = p.color; ctx.globalAlpha = Math.max(0, p.life);
+                ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
+            }
             ctx.globalAlpha = 1.0; ctx.globalCompositeOperation = 'source-over';
-            particles = particles.filter(p => p.life > 0);
         },
 
-        cleanup: function() {
-            if (this.gpsWatcher !== null) navigator.geolocation.clearWatch(this.gpsWatcher);
-        }
+        cleanup: function() {}
     };
 
     const regLoop = setInterval(() => {
         if(window.System && window.System.registerGame) {
-            window.System.registerGame('ar_collector', 'AR Empresa USR', '🏢', Game, {
+            window.System.registerGame('ar_truck_sim', 'AR Ops Master', '🚛', Game, {
                 camera: 'environment',
                 phases: [
-                    { id: 'f1', name: 'CONTRATO DE SUCATA', desc: 'Identifique, confirme e descarregue carrinhos na base para lucrar.', reqLvl: 1 }
+                    { id: 'f1', name: 'EXPEDIÇÃO COMPLETA', desc: 'Missão contínua: gerencie recursos, colete raridades e expanda a frota.', reqLvl: 1 }
                 ]
             });
             clearInterval(regLoop);
